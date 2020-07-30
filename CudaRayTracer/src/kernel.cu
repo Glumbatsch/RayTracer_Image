@@ -14,7 +14,15 @@
 
 #include "OpenImageDenoise\oidn.h"
 
+#define DENOISE_FINAL_IMAGE
+
+#ifndef _DEBUG
+// Release
+#define cudaCall(x) x
+#else
+// Debug
 #define cudaCall(x) assert(x == cudaSuccess)
+#endif 
 
 #define GetIndex() threadIdx.x + blockIdx.x * blockDim.x
 #define IsOutOfBounds(id, image) id >= image->width * image->height
@@ -79,12 +87,16 @@ int PackColor(float3 color)
 
 void WriteBMP(int imageHeight, int imageWidth)
 {
-
-	float3* fpixels = (float3*)malloc(sizeof(float3) * g_rayCount);
+	size_t floatImageSize = sizeof(float3) * g_rayCount;
+	// OIDN seems not to like pinned memory - difference is just 
+	// ~1.5s on 1920x1080 dbg
+	float3* fpixels = (float3*)malloc(floatImageSize);
+	//cudaCall(cudaMallocHost(&fpixels,floatImageSize));
 	int* pixels = (int*)malloc(sizeof(int) * g_rayCount);
 	cudaCall(cudaMemcpy(fpixels, g_deviceImage,
-		sizeof(float3) * g_rayCount, cudaMemcpyDeviceToHost));
+		floatImageSize, cudaMemcpyDeviceToHost));
 
+#ifdef DENOISE_FINAL_IMAGE 
 	// #Denoiser
 	OIDNDevice device = oidnNewDevice(OIDN_DEVICE_TYPE_DEFAULT);
 	oidnCommitDevice(device);
@@ -106,7 +118,7 @@ void WriteBMP(int imageHeight, int imageWidth)
 	}
 	oidnReleaseFilter(filter);
 	oidnReleaseDevice(device);
-
+#endif
 	for (int y = 0; y < imageHeight; y++)
 	{
 		for (int x = 0; x < imageWidth; x++)
@@ -124,13 +136,12 @@ void WriteBMP(int imageHeight, int imageWidth)
 
 int main()
 {
-	int imageWidth = 720;
-	int imageHeight = 480;
+	int imageWidth = 1920;
+	int imageHeight = 1080;
 
 	CudaInit(imageWidth, imageHeight);
-	printf("Ray casting... ");
 	Raytrace(imageWidth, imageHeight);
-	printf(" done!\n");
+	cudaCall(cudaDeviceSynchronize());
 	printf("Writing image to file...");
 	WriteBMP(imageHeight, imageWidth);
 	printf(" done!\n");
@@ -156,10 +167,15 @@ void CudaInit(int imageWidth, int imageHeight)
 	planes[0].d = 0;
 	planes[0].materialIndex = 1;
 
-	Sphere spheres[1] = {};
+	Sphere spheres[2] = {};
 	spheres[0].position = make_float3(0.0f, 0.0f, 0.0f);
 	spheres[0].radius = 0.75f;
 	spheres[0].materialIndex = 2;
+
+	spheres[1].position = make_float3(3.0f, -2.0f, 0.0f);
+	spheres[1].radius = 0.75f;
+	spheres[1].materialIndex = 2;
+
 
 	World w = {};
 	w.materialCount = sizeof(materials) / sizeof(materials[0]);
@@ -180,7 +196,7 @@ void CudaInit(int imageWidth, int imageHeight)
 		cudaMemcpyHostToDevice));
 	cudaCall(cudaMemcpy(w.materials, &materials, sizeof(materials),
 		cudaMemcpyHostToDevice));
-	PrintMaterialsKernel << <1, 1 >> > (d_world);
+	//PrintMaterialsKernel << <1, 1 >> > (d_world);
 	cudaCall(cudaMemcpy(w.planes, &planes, sizeof(planes),
 		cudaMemcpyHostToDevice));
 	cudaCall(cudaMemcpy(w.spheres, &spheres, sizeof(spheres),
@@ -200,8 +216,8 @@ void CudaInit(int imageWidth, int imageHeight)
 	DeviceImage image = {};
 	image.width = imageWidth;
 	image.height = imageHeight;
-	image.filmWidth = 0.75f;
-	image.filmHeight = 0.75f;
+	image.filmWidth = 1.0f;
+	image.filmHeight = 1.0f;
 
 	if (image.width > image.height)
 	{
@@ -353,11 +369,15 @@ void Raytrace(int imageWidth, int imageHeight)
 	// #Note With a higher block size the InitCurandKernel launch will fail because it requires an insane ~6kb stack frame...
 	int threadCount = 128;
 	int blockCount = imageWidth * imageHeight / threadCount + 1;
+	printf("Initializing cuRand states... ");
 	InitCurandKernel << <blockCount, threadCount >> > (g_rayCount, d_randStates, 1234);
+	cudaCall(cudaDeviceSynchronize());
+	printf("done! \n");
 
 	int maxBounces = 8;
 	int samplesPerPixel = 16;
 	float contributionPerPixel = 1.0f / (float)samplesPerPixel;
+	printf("Ray casting... ");
 
 	for (int s = 0; s < samplesPerPixel; s++)
 	{
@@ -376,5 +396,8 @@ void Raytrace(int imageWidth, int imageHeight)
 		WriteRayColorToImage << <blockCount, threadCount >> >
 			(d_image, d_world, contributionPerPixel);
 	}
+
+	cudaCall(cudaDeviceSynchronize());
+	printf("done!\n");
 }
 // #Todo remove unnecessary parameters from kernels (e.g. image)
