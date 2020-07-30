@@ -71,3 +71,13 @@ struct World {
 	Ray* rays;
 	Intersection* intersections;
 };
+
+struct Config
+{
+	int imageWidth;
+	int imageHeight;
+
+	int samplesPerPixel;
+	int maxBounces;
+	bool bDenoise;
+};

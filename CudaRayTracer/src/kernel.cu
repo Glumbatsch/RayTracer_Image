@@ -1,3 +1,6 @@
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include "Structs.h"
@@ -8,6 +11,7 @@
 #include <assert.h>
 #include <cstdlib>
 #include <float.h>
+#include <chrono>
 
 #include <curand.h>
 #include <curand_kernel.h>
@@ -16,38 +20,20 @@
 
 #define DENOISE_FINAL_IMAGE
 
+#define ARRAY_LENGTH(arr) (sizeof(arr)/sizeof((arr)[0]))
+
 #ifndef _DEBUG
 // Release
 #define cudaCall(x) x
 #else
 // Debug
-#define cudaCall(x) assert(x == cudaSuccess)
+#define cudaCall(x) (assert(x == cudaSuccess))
 #endif 
 
-#define GetIndex() threadIdx.x + blockIdx.x * blockDim.x
-#define IsOutOfBounds(id, image) id >= image->width * image->height
+#define GetIndex() (threadIdx.x + blockIdx.x * blockDim.x)
+#define IsOutOfBounds(id, image) (id >= image->width * image->height)
 
-__global__ void DebugRaysKernel(World* world)
-{
-	int a = 1;
-	int b = 2;
-	int c = a++ + b;
-}
-
-
-__global__ void PrintMaterialsKernel(World* world)
-{
-	int count = world->materialCount;
-	for (int i = 0; i < count; i++)
-	{
-		Material m = world->materials[i];
-		printf("Material %d: \n", i);
-		printf("\t Albedo: %1.3f %1.3f %1.3f\n", m.albedo.x, m.albedo.y, m.albedo.z);
-		printf("\t EmitColor: %1.3f %1.3f %1.3f\n", m.emitColor.x, m.emitColor.y, m.emitColor.z);
-		printf("\t Roughness: %1.3f\n\n", m.roughness);
-	}
-}
-
+Config g_cfg;
 int g_rayCount;
 float3* g_deviceImage;
 // Device Stuff
@@ -56,8 +42,8 @@ Camera* d_camera;
 DeviceImage* d_image;
 curandState* d_randStates;
 
-void Raytrace(int imageWidth, int imageHeight);
-void CudaInit(int imageWidth, int imageHeight);
+void Raytrace();
+void CudaInit();
 
 __global__ void GeneratePrimaryRaysKernel(DeviceImage* image,
 	World* world, Camera* camera, int bounces,
@@ -70,6 +56,32 @@ __global__ void ShadeIntersectionsKernel(DeviceImage* image,
 	World* world, curandState* randStates);
 __global__ void WriteRayColorToImage(DeviceImage* image,
 	World* world, float contributionPerPixel);
+
+void LoadConfig(const char* fileName, Config& cfg)
+{
+	cfg.imageWidth = GetPrivateProfileInt("Image", "imageWidth", 
+		1024, fileName);
+	cfg.imageHeight = GetPrivateProfileInt("Image", "imageHeight",
+		720, fileName);
+
+	cfg.samplesPerPixel = GetPrivateProfileInt("RT", 
+		"samplesPerPixel", 32, fileName);
+	cfg.maxBounces = GetPrivateProfileInt("RT", "maxBounces",
+		16, fileName);
+	cfg.bDenoise = GetPrivateProfileInt("RT", "bDenoise",
+		1, fileName);
+
+
+	printf("Starting the Path tracer with the following configuration:\n\n");
+	printf("\tImage: %dx%d\n", cfg.imageWidth, cfg.imageHeight);
+	printf("\tSamples per pixel: %d\n", cfg.samplesPerPixel);
+	printf("\tMaximum bounces per path: %d\n",cfg.maxBounces);
+	const char en[] = "enabled";
+	const char dis[] = "disabled";
+	const char* denoiseString = cfg.bDenoise ? en : dis;
+	printf("\tDenoising is %s\n", denoiseString);
+	printf("\n");
+}
 
 // float3 to packed ABGR
 int PackColor(float3 color)
@@ -85,8 +97,11 @@ int PackColor(float3 color)
 	return result;
 }
 
-void WriteBMP(int imageHeight, int imageWidth)
+void WriteBMP()
 {
+	printf("Writing image to file...");
+	auto startTime = std::chrono::high_resolution_clock::now();
+
 	size_t floatImageSize = sizeof(float3) * g_rayCount;
 	// OIDN seems not to like pinned memory - difference is just 
 	// ~1.5s on 1920x1080 dbg
@@ -96,29 +111,35 @@ void WriteBMP(int imageHeight, int imageWidth)
 	cudaCall(cudaMemcpy(fpixels, g_deviceImage,
 		floatImageSize, cudaMemcpyDeviceToHost));
 
-#ifdef DENOISE_FINAL_IMAGE 
+	int imageWidth = g_cfg.imageWidth;
+	int imageHeight = g_cfg.imageHeight;
+
 	// #Denoiser
-	OIDNDevice device = oidnNewDevice(OIDN_DEVICE_TYPE_DEFAULT);
-	oidnCommitDevice(device);
-
-	OIDNFilter filter = oidnNewFilter(device, "RT");
-	oidnSetSharedFilterImage(filter, "color", fpixels,
-		OIDN_FORMAT_FLOAT3, imageWidth, imageHeight, 0, 0, 0);
-	oidnSetSharedFilterImage(filter, "output", fpixels,
-		OIDN_FORMAT_FLOAT3, imageWidth, imageHeight, 0, 0, 0);
-	oidnSetFilter1b(filter, "hdr", false);
-	oidnCommitFilter(filter);
-
-	oidnExecuteFilter(filter);
-
-	const char* errorMessage;
-	if (oidnGetDeviceError(device, &errorMessage) != OIDN_ERROR_NONE)
+	if (g_cfg.bDenoise)
 	{
-		printf("Error: %s\n", errorMessage);
+		OIDNDevice device = oidnNewDevice(OIDN_DEVICE_TYPE_DEFAULT);
+		oidnCommitDevice(device);
+
+		OIDNFilter filter = oidnNewFilter(device, "RT");
+		oidnSetSharedFilterImage(filter, "color", fpixels,
+			OIDN_FORMAT_FLOAT3, imageWidth, imageHeight, 0, 0, 0);
+		oidnSetSharedFilterImage(filter, "output", fpixels,
+			OIDN_FORMAT_FLOAT3, imageWidth, imageHeight, 0, 0, 0);
+		oidnSetFilter1b(filter, "hdr", false);
+		oidnCommitFilter(filter);
+
+		oidnExecuteFilter(filter);
+
+		const char* errorMessage;
+		if (oidnGetDeviceError(device, &errorMessage) != 
+			OIDN_ERROR_NONE)
+		{
+			printf("Error: %s\n", errorMessage);
+		}
+		oidnReleaseFilter(filter);
+		oidnReleaseDevice(device);
 	}
-	oidnReleaseFilter(filter);
-	oidnReleaseDevice(device);
-#endif
+
 	for (int y = 0; y < imageHeight; y++)
 	{
 		for (int x = 0; x < imageWidth; x++)
@@ -132,50 +153,87 @@ void WriteBMP(int imageHeight, int imageWidth)
 	stbi_flip_vertically_on_write(true);
 	stbi_write_bmp("image.bmp", imageWidth, imageHeight, 4,
 		(void*)pixels);
+
+	auto endTime = std::chrono::high_resolution_clock::now();
+	auto mili = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+	printf(" done! That took %3.3f seconds.\n",(double)mili/1000.0);
+}
+
+Plane CreatePlane(const float3& a, const float3& b, const float3& c)
+{
+	Plane p;
+	p.normal = Normalized(Cross(b - a, c - a));
+	p.d = Dot(p.normal, a);
+	p.materialIndex = 0;
+	return p;
 }
 
 int main()
 {
-	int imageWidth = 1920;
-	int imageHeight = 1080;
+	LoadConfig("./rt.ini",g_cfg);
 
-	CudaInit(imageWidth, imageHeight);
-	Raytrace(imageWidth, imageHeight);
+	CudaInit();
+	Raytrace();
 	cudaCall(cudaDeviceSynchronize());
-	printf("Writing image to file...");
-	WriteBMP(imageHeight, imageWidth);
-	printf(" done!\n");
+	WriteBMP();
+	
 	std::system("start image.bmp");
 	return 0;
 }
 
-void CudaInit(int imageWidth, int imageHeight)
+void CudaInit()
 {
-	g_rayCount = imageWidth * imageHeight;
+	g_rayCount = g_cfg.imageWidth * g_cfg.imageHeight;
 
-	Material materials[3] = {};
-	materials[0].emitColor = make_float3(0.1f, 0.4f, 0.5f);
+	Material materials[6] = {};
+	materials[0].emitColor = make_float3(0.1f, 0.4f, 0.5f) * 0.0f;
 	materials[1].albedo = make_float3(0.5f, 0.5f, 0.5f);
 	materials[1].roughness = 0.75f;
-	materials[2].albedo = make_float3(0.7f, 0.5f, 0.3f);
+	materials[2].emitColor = make_float3(0.7f, 0.5f, 0.3f) * 100.0f;
 	materials[2].roughness = 0.75f;
+	materials[3].albedo = make_float3(0.9f, 0.1f, 0.1f);
+	materials[3].roughness = 1.0f;
+	materials[4].albedo = make_float3(0.2f, 0.8f, 0.2f);
+	materials[4].roughness = 0.0f;
+	materials[5].emitColor = make_float3(0.1f, 1.0f, 0.1f) * 5.0f;
 
-	Plane planes[1] = {};
 
-	// x-y plane in the origin
-	planes[0].normal = make_float3(0.0f, 0.0f, 1.0f);
-	planes[0].d = 0;
+	Plane planes[5] = {};
+	float3 zero = make_float3(0.0f, 0.0f, 0.0f);
+	float3 right = make_float3(1.0f, 0.0f, 0.0f) * 3.0f;
+	float3 up = make_float3(0.0f, 0.0f, 1.0f) * -3.0f;
+	float3 forward = make_float3(0.0f, -1.0f, 0.0f) * 3.0f;
+	// Floor
+	planes[0] = CreatePlane(-up, -up - right, -up + forward);
 	planes[0].materialIndex = 1;
+	// Left wall
+	planes[1] = CreatePlane(right, right - up, right + forward);
+	planes[1].materialIndex = 1;
 
-	Sphere spheres[2] = {};
-	spheres[0].position = make_float3(0.0f, 0.0f, 0.0f);
-	spheres[0].radius = 0.75f;
+	// Right wall
+	planes[2] = CreatePlane(-right, -right + up, -right + forward);
+	planes[2].materialIndex = 1;
+
+	// Back wall
+	planes[3] = CreatePlane(forward, forward + up, forward + right);
+	planes[3].materialIndex = 1;
+
+	// Ceiling
+	planes[4] = CreatePlane(up, up + right, up + forward);
+	planes[4].materialIndex = 1;
+
+	Sphere spheres[3] = {};
+	spheres[0].position = make_float3(0.0f, 0.0f, 3.75f);
+	spheres[0].radius = 1.0f;
 	spheres[0].materialIndex = 2;
 
-	spheres[1].position = make_float3(3.0f, -2.0f, 0.0f);
-	spheres[1].radius = 0.75f;
-	spheres[1].materialIndex = 2;
+	spheres[1].position = make_float3(2.0f, -2.0f, 0.0f);
+	spheres[1].radius = 1.0f;
+	spheres[1].materialIndex = 3;
 
+	spheres[2].position = make_float3(-2.0f, -1.0f, 2.0f);
+	spheres[2].radius = 1.0f;
+	spheres[2].materialIndex = 4;
 
 	World w = {};
 	w.materialCount = sizeof(materials) / sizeof(materials[0]);
@@ -196,14 +254,13 @@ void CudaInit(int imageWidth, int imageHeight)
 		cudaMemcpyHostToDevice));
 	cudaCall(cudaMemcpy(w.materials, &materials, sizeof(materials),
 		cudaMemcpyHostToDevice));
-	//PrintMaterialsKernel << <1, 1 >> > (d_world);
 	cudaCall(cudaMemcpy(w.planes, &planes, sizeof(planes),
 		cudaMemcpyHostToDevice));
 	cudaCall(cudaMemcpy(w.spheres, &spheres, sizeof(spheres),
 		cudaMemcpyHostToDevice));
 
 	Camera cam = {};
-	cam.position = make_float3(0.0f, -10.0f, 1.0f);
+	cam.position = make_float3(0.0f, -12.5f, 0.0f);
 	cam.forward = Normalized(cam.position);
 	cam.right = Normalized(Cross(make_float3(0.0f, 0.0f, 1.0f),
 		cam.forward));
@@ -214,8 +271,8 @@ void CudaInit(int imageWidth, int imageHeight)
 		cudaMemcpyHostToDevice));
 
 	DeviceImage image = {};
-	image.width = imageWidth;
-	image.height = imageHeight;
+	image.width = g_cfg.imageWidth;
+	image.height = g_cfg.imageHeight;
 	image.filmWidth = 1.0f;
 	image.filmHeight = 1.0f;
 
@@ -342,15 +399,19 @@ __global__ void ShadeIntersectionsKernel(DeviceImage* image,
 
 	Intersection intersection = world->intersections[id];
 	Material mat = world->materials[intersection.material];
-	r.color *= (mat.albedo + mat.emitColor);
 
-	Reflect(r, intersection.t, intersection.normal, &randStates[id],
-		mat.roughness);
 	if (Length2(mat.emitColor) > 0.0f)
 	{
+		r.color *= mat.emitColor;
 		r.bounces = -1;
 	}
-	r.bounces -= 1;
+	else
+	{
+		Reflect(r, intersection.t, intersection.normal, &randStates[id],
+			mat.roughness);
+		r.color *= (mat.albedo + mat.emitColor);
+		r.bounces -= 1;
+	}
 	world->rays[id] = r;
 }
 
@@ -364,21 +425,33 @@ __global__ void WriteRayColorToImage(DeviceImage* image,
 	image->pixels[id] += r.color * contributionPerPixel;
 }
 
-void Raytrace(int imageWidth, int imageHeight)
+void Raytrace()
 {
-	// #Note With a higher block size the InitCurandKernel launch will fail because it requires an insane ~6kb stack frame...
-	int threadCount = 128;
+	// #Note With a higher block size the InitCurandKernel launch will 
+	// fail because it requires an insane ~6kb stack frame...
+	int threadCount = 512;
+
+	int imageWidth = g_cfg.imageWidth;
+	int imageHeight = g_cfg.imageHeight;
+
 	int blockCount = imageWidth * imageHeight / threadCount + 1;
+
 	printf("Initializing cuRand states... ");
+	// #Time
+	auto startTime = std::chrono::high_resolution_clock::now();
 	InitCurandKernel << <blockCount, threadCount >> > (g_rayCount, d_randStates, 1234);
 	cudaCall(cudaDeviceSynchronize());
-	printf("done! \n");
+	auto endTime = std::chrono::high_resolution_clock::now();
+	auto mili = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+	printf(" done! That took %3.3f seconds.\n", (double)mili / 1000.0);
 
-	int maxBounces = 8;
-	int samplesPerPixel = 16;
+	int maxBounces = g_cfg.maxBounces;
+	int samplesPerPixel = g_cfg.samplesPerPixel;
 	float contributionPerPixel = 1.0f / (float)samplesPerPixel;
-	printf("Ray casting... ");
 
+	printf("Ray casting... ");
+	// #Time
+	startTime = std::chrono::high_resolution_clock::now();
 	for (int s = 0; s < samplesPerPixel; s++)
 	{
 		GeneratePrimaryRaysKernel << <blockCount, threadCount >> >
@@ -398,6 +471,8 @@ void Raytrace(int imageWidth, int imageHeight)
 	}
 
 	cudaCall(cudaDeviceSynchronize());
-	printf("done!\n");
+	endTime = std::chrono::high_resolution_clock::now();
+	mili = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+	printf(" done! That took %3.3f seconds.\n", (double)mili / 1000.0);
 }
 // #Todo remove unnecessary parameters from kernels (e.g. image)
