@@ -1,18 +1,17 @@
 #pragma once
-#include "Types.h"
 #include "Float3.h"
 
 struct Image {
-	u32 width;
-	u32 height;
-	u32* pixels;
+	int width;
+	int height;
+	int* pixels;
 };
 
 struct DeviceImage {
-	u32 width;
-	u32 height;
-	f32 filmWidth;
-	f32 filmHeight;
+	int width;
+	int height;
+	float filmWidth;
+	float filmHeight;
 	float3* pixels;
 };
 
@@ -28,7 +27,7 @@ struct Material
 {
 	float3 albedo;
 	float3 emitColor;
-	f32 roughness;
+	float roughness;
 };
 
 struct Ray 
@@ -36,39 +35,39 @@ struct Ray
 	float3 origin;
 	float3 direction;
 	float3 color;
-	i32 bounces;
+	int bounces;
 };
 
 struct Intersection
 {
 	float3 normal;
 	float t;
-	u32 material;
+	int material;
 };
 
 struct Plane {
 	float3 normal;
-	f32 d;
-	u32 materialIndex;
+	float d;
+	int materialIndex;
 };
 
 struct Sphere {
 	float3 position;
-	f32 radius;
-	u32 materialIndex;
+	float radius;
+	int materialIndex;
 };
 
 struct World {
-	u32 materialCount;
+	int materialCount;
 	Material* materials;
 
-	u32 sphereCount;
+	int sphereCount;
 	Sphere* spheres;
 
-	u32 planeCount;
+	int planeCount;
 	Plane* planes;
 
-	u32 rayCount;
+	int rayCount;
 	Ray* rays;
 	Intersection* intersections;
 };
