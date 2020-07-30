@@ -150,6 +150,18 @@ void CudaInit(u32 imageWidth, u32 imageHeight)
 	image.height = imageHeight;
 	image.filmWidth = 1.0f;
 	image.filmHeight = 1.0f;
+
+	if (image.width > image.height)
+	{
+		image.filmHeight = image.filmWidth *
+			((f32)image.height / (f32)image.width);
+	}
+	else if (image.width < image.height)
+	{
+		image.filmWidth= image.filmHeight *
+			((f32)image.width / (f32)image.height);
+	}
+
 	cudaCall(cudaMalloc(&image.pixels,
 		sizeof(float3) * g_rayCount));
 	g_deviceImage = image.pixels;
