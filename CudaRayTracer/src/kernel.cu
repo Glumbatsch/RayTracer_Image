@@ -91,10 +91,11 @@ void CudaInit(u32 imageWidth, u32 imageHeight)
 {
 	g_rayCount = imageWidth * imageHeight;
 
-	Material materials[2] = {};
+	Material materials[3] = {};
 	//materials[0].color = make_float3(1.0f, 0.07f, 0.8f);
 	materials[0].color = make_float3(0.1f, 0.1f, 0.1f);
 	materials[1].color = make_float3(1.0f, 0.0f, 0.0f);
+	materials[2].color = make_float3(0.0f, 0.0f, 1.0f);
 
 	Plane planes[1] = {};
 
@@ -104,12 +105,15 @@ void CudaInit(u32 imageWidth, u32 imageHeight)
 	planes[0].materialIndex = 1;
 
 	Sphere spheres[1] = {};
+	spheres[0].position = make_float3(0.0f, 0.0f, 0.0f);
+	spheres[0].radius = 1.0f;
+	spheres[0].materialIndex = 2;
 
 	World w = {};
 	w.materialCount = 2;
-	w.sphereCount = 0;
-	w.spheres = nullptr;
-	w.planeCount = 1;
+	w.sphereCount = sizeof(spheres)/ sizeof(spheres[0]);
+	w.spheres = spheres;
+	w.planeCount = sizeof(planes)/sizeof(planes[0]);
 	w.rayCount = g_rayCount;
 
 	cudaCall(cudaMalloc(&d_world, sizeof(World)));
@@ -201,7 +205,7 @@ __global__ void ComputeIntersectionsKernel(DeviceImage* image,
 	Intersection closestHit = {};
 	closestHit.t = FLT_MAX;
 
-	// Test against all Planes
+	// Test against all planes
 	for (u32 i = 0; i < world->planeCount; i++)
 	{
 		f32 t;
@@ -210,8 +214,21 @@ __global__ void ComputeIntersectionsKernel(DeviceImage* image,
 		if (isHit && t < closestHit.t)
 		{
 			closestHit.t = t;
-			closestHit.normal = plane.normal;
 			closestHit.material = plane.materialIndex;
+			closestHit.normal = plane.normal;
+		}
+	}
+	// Test against all spheres
+	for (u32 i = 0; i < world->sphereCount; i++)
+	{
+		f32 t;
+		Sphere sphere = world->spheres[i];
+		bool isHit = IntersectSphere(ray, sphere, t);
+		if (isHit && t < closestHit.t)
+		{
+			closestHit.t;
+			closestHit.material = sphere.materialIndex;
+			closestHit.normal = GetSphereNormal(ray,sphere,t);
 		}
 	}
 	world->intersections[id] = closestHit;
@@ -240,5 +257,4 @@ void Raytrace(u32 imageWidth, u32 imageHeight)
 	ShadeIntersectionsKernel<<<blockCount,threadCount>>>
 		(d_image, d_world, d_camera);
 }
-// #Leftof 1:53 - test and fix plane intersection next
 // #Todo remove unnecessary parameters from kernels (e.g. image)
