@@ -15,6 +15,7 @@
 
 #include "OpenImageDenoise\oidn.h"
 
+double g_totalSeconds = 0.0;
 Config g_cfg;
 float3* g_deviceImage;
 // Device Stuff
@@ -47,6 +48,9 @@ int main()
 	cudaCall(cudaDeviceSynchronize());
 	WriteBMP(g_cfg,g_deviceImage);
 	
+	printf("\nTotal time: %3.3f seconds.", g_totalSeconds);
+
+	Sleep(1000); // #hack sometimes os can't open the image
 	std::system("start image.bmp");
 	return 0;
 }
@@ -179,7 +183,12 @@ __global__ void InitCurandKernel(int rayCount,
 	int id = GetIndex();
 	if (id >= rayCount) return;
 
-	curand_init(seed, id, 0, &randStates[id]);
+	//curand_init(seed, id, 0, &randStates[id]);
+
+	// #hack 
+	// https://forums.developer.nvidia.com/t/curand-initialization-time/19758/3
+	// supposedly much faster init, with worse random numbers?
+	curand_init((seed << 20) + id, 0, 0, &randStates[id]);
 }
 
 __global__ void GeneratePrimaryRaysKernel(DeviceImage* image,
@@ -309,12 +318,14 @@ void Raytrace()
 
 	printf("Initializing cuRand states... ");
 	// #Time
-	auto startTime = std::chrono::high_resolution_clock::now();
-	InitCurandKernel << <blockCount, threadCount >> > (rayCount, d_randStates, 1234);
+	TimeStamp startTime = std::chrono::high_resolution_clock::now();
+	InitCurandKernel << <blockCount, threadCount >> > 
+		(rayCount, d_randStates, 1234);
 	cudaCall(cudaDeviceSynchronize());
-	auto endTime = std::chrono::high_resolution_clock::now();
-	auto mili = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
-	printf(" done! That took %3.3f seconds.\n", (double)mili / 1000.0);
+	TimeStamp endTime = std::chrono::high_resolution_clock::now();
+	double dt = GetElapsedSeconds(startTime,endTime);
+	g_totalSeconds += dt;
+	printf(" done! That took %3.3f seconds.\n", dt);
 
 	int maxBounces = g_cfg.maxBounces;
 	int samplesPerPixel = g_cfg.samplesPerPixel;
@@ -343,6 +354,6 @@ void Raytrace()
 
 	cudaCall(cudaDeviceSynchronize());
 	endTime = std::chrono::high_resolution_clock::now();
-	mili = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
-	printf(" done! That took %3.3f seconds.\n", (double)mili / 1000.0);
+	dt = GetElapsedSeconds(startTime,endTime);
+	printf(" done! That took %3.3f seconds.\n", dt);
 }

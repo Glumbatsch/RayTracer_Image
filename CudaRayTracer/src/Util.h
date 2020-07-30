@@ -7,6 +7,8 @@
 #include "Structs.h"
 #include <chrono>
 
+typedef std::chrono::steady_clock::time_point TimeStamp;
+
 #ifndef _DEBUG
 // Release
 #define cudaCall(x) x
@@ -40,7 +42,7 @@ void LoadConfig(const char* fileName, Config& cfg)
 	const char en[] = "enabled";
 	const char dis[] = "disabled";
 	const char* denoiseString = cfg.bDenoise ? en : dis;
-	printf("\tDenoising is %s\n", denoiseString);
+	printf("\tDenoising is %s.\n", denoiseString);
 	printf("\n");
 }
 // float3 to packed ABGR
@@ -127,4 +129,10 @@ Plane CreatePlane(const float3& a, const float3& b, const float3& c)
 	p.d = Dot(p.normal, a);
 	p.materialIndex = 0;
 	return p;
+}
+
+double GetElapsedSeconds(TimeStamp& start,TimeStamp& end)
+{
+	__int64 mili = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+	return (double)mili / 1000.0;
 }
