@@ -1,3 +1,4 @@
+#define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include "Structs.h"
