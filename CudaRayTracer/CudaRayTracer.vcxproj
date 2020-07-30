@@ -101,6 +101,7 @@
     <ClInclude Include="src\stb_image_writer.h" />
     <ClInclude Include="src\Structs.h" />
     <ClInclude Include="src\Types.h" />
+    <ClInclude Include="src\Util.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\stb_image_writer.cpp" />
