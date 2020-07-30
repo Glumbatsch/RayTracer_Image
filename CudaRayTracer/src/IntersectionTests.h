@@ -37,7 +37,7 @@ __device__ bool IntersectSphere(const Ray& ray,
 
 	t = -b - sqrtf(discriminant);
 	// clamp t to 0
-	if (t < 0.0f) t = 0.0f;
+	if (t < 0.0f) return false;
 
 	return true;
 }
@@ -67,14 +67,14 @@ __device__ void Reflect(Ray& ray, float t, float3 normal,
 	ray.origin = hitPoint;
 
 	float3 pureReflect = Normalized(ray.direction 
-		+ Dot(ray.direction, normal) * 2.0f * normal);
+		- Dot(ray.direction, normal) * 2.0f * normal);
 	float3 randomDirection = make_float3(
 		RandomBilateral(randState),
 		RandomBilateral(randState),
 		RandomBilateral(randState)
 	);
 	float3 randomReflect = Normalized(normal+randomDirection);
-	ray.direction = Lerp(randomReflect, pureReflect, 1.0f);
+	ray.direction = Lerp(randomReflect, pureReflect, roughness);
 	Normalize(ray.direction);
 	ray.origin += ray.direction * 0.0001f;
 }

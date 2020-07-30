@@ -315,7 +315,7 @@ void Raytrace(int imageWidth, int imageHeight)
 	int threadCount = 128;
 	int blockCount = imageWidth * imageHeight / threadCount + 1;
 	InitCurandKernel << <blockCount, threadCount>> > (g_rayCount, d_randStates, 1234);
-	int maxBounces = 2;
+	int maxBounces = 8;
 	
 	GeneratePrimaryRaysKernel << <blockCount, threadCount >> >
 		(d_image, d_world, d_camera, maxBounces);

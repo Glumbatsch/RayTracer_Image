@@ -87,7 +87,6 @@
   <ItemGroup>
     <ClInclude Include="src\Float3.h" />
     <ClInclude Include="src\IntersectionTests.h" />
-    <ClInclude Include="src\OutputWriter.h" />
     <ClInclude Include="src\stb_image_writer.h" />
     <ClInclude Include="src\Structs.h" />
     <ClInclude Include="src\Types.h" />
