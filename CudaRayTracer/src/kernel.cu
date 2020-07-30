@@ -50,7 +50,8 @@ void Raytrace(int imageWidth, int imageHeight);
 void CudaInit(int imageWidth, int imageHeight);
 
 __global__ void GeneratePrimaryRaysKernel(DeviceImage* image,
-	World* world, Camera* camera, int bounces);
+	World* world, Camera* camera, int bounces, 
+	curandState* randStates);
 __global__ void ComputeIntersectionsKernel(DeviceImage* image,
 	World* world);
 __global__ void InitCurandKernel(int rayCount, 
@@ -58,7 +59,7 @@ __global__ void InitCurandKernel(int rayCount,
 __global__ void ShadeIntersectionsKernel(DeviceImage* image, 
 	World* world, curandState* randStates);
 __global__ void WriteRayColorToImage(DeviceImage* image, 
-	World* world);
+	World* world, float contributionPerPixel);
 
 // float3 to packed ABGR
 int PackColor(float3 color)
@@ -214,7 +215,8 @@ __global__ void InitCurandKernel(int rayCount,
 }
 
 __global__ void GeneratePrimaryRaysKernel(DeviceImage* image,
-	World* world, Camera* camera, int bounces)
+	World* world, Camera* camera, int bounces, 
+	curandState* randStates)
 {
 	int id = GetIndex();
 	if (IsOutOfBounds(id, image)) return;
@@ -224,8 +226,16 @@ __global__ void GeneratePrimaryRaysKernel(DeviceImage* image,
 	int pixelX = id % image->width;
 	int pixelY = id / image->width;
 
-	float filmX = -1.0f + 2.0f * ((float)pixelX / (float)image->width);
-	float filmY = -1.0f + 2.0f * ((float)pixelY / (float)image->height);
+	float filmX = -1.0f + 2.0f * 
+		((float)pixelX / (float)image->width);
+	float filmY = -1.0f + 2.0f * 
+		((float)pixelY / (float)image->height);
+
+	float halfPixelWidth = 0.5f * (1.0f / (float)image->width);
+	float halfPixelHeight = 0.5f * (1.0f / (float)image->height);
+
+	filmX += RandomBilateral(&randStates[id]) * halfPixelWidth;
+	filmY += RandomBilateral(&randStates[id]) * halfPixelHeight;
 
 	float3 filmP = filmCenter +
 		filmX * camera->right * image->filmWidth * 0.5f +
@@ -327,7 +337,7 @@ void Raytrace(int imageWidth, int imageHeight)
 	for (int s = 0; s < samplesPerPixel; s++)
 	{
 		GeneratePrimaryRaysKernel << <blockCount, threadCount >> >
-			(d_image, d_world, d_camera, maxBounces);
+			(d_image, d_world, d_camera, maxBounces,d_randStates);
 
 		for (int i = 0; i < maxBounces; i++)
 		{
