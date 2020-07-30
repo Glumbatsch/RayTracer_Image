@@ -2,6 +2,7 @@
 #include "device_launch_parameters.h"
 #include "Types.h"
 #include "Structs.h"
+#include "IntersectionTests.h"
 #include "stb_image_writer.h"
 
 #include <stdio.h>
@@ -39,9 +40,9 @@ __global__ void ComputeIntersectionsKernel(DeviceImage* image,
 // float3 to packed ABGR
 u32 PackColor(float3 color)
 {
-	u32 r = 255.9f * color.x;
-	u32 g = 255.9f * color.y;
-	u32 b = 255.9f * color.z;
+	u32 r = (u32)(255.9f * color.x);
+	u32 g = (u32)(255.9f * color.y);
+	u32 b = (u32)(255.9f * color.z);
 
 	u32 result = 0xFF000000; // alpha
 	result += (u8)b << 16;
@@ -58,9 +59,9 @@ void WriteBMP(u32 imageHeight, u32 imageWidth)
 	cudaCall(cudaMemcpy(fpixels, g_deviceImage,
 		sizeof(float3) * g_rayCount, cudaMemcpyDeviceToHost));
 
-	for (int y = 0; y < imageHeight; y++)
+	for (u32 y = 0; y < imageHeight; y++)
 	{
-		for (int x = 0; x < imageWidth; x++)
+		for (u32 x = 0; x < imageWidth; x++)
 		{
 			u32 id = x + imageWidth * y;
 			pixels[id] = PackColor(fpixels[id]);
@@ -91,8 +92,8 @@ void CudaInit(u32 imageWidth, u32 imageHeight)
 	g_rayCount = imageWidth * imageHeight;
 
 	Material materials[2] = {};
-	materials[0].color = make_float3(1.0f, 0.07f, 0.8f);
-	//materials[0].color = make_float3(0.0f, 0.0f, 0.0f);
+	//materials[0].color = make_float3(1.0f, 0.07f, 0.8f);
+	materials[0].color = make_float3(0.1f, 0.1f, 0.1f);
 	materials[1].color = make_float3(1.0f, 0.0f, 0.0f);
 
 	Plane planes[1] = {};
@@ -100,6 +101,7 @@ void CudaInit(u32 imageWidth, u32 imageHeight)
 	// xy plane in the origin
 	planes[0].normal = make_float3(0.0f, 0.0f, 1.0f);
 	planes[0].d = 0;
+	planes[0].materialIndex = 1;
 
 	Sphere spheres[1] = {};
 
@@ -129,10 +131,10 @@ void CudaInit(u32 imageWidth, u32 imageHeight)
 		cudaMemcpyHostToDevice));
 
 	Camera cam = {};
-	cam.position = make_float3(0.0f, 10.0f, 1.0f);
+	cam.position = make_float3(0.0f, -10.0f, 1.0f);
 	cam.forward = Normalized(cam.position);
-	cam.right = Normalized(Cross(cam.forward,
-		make_float3(0.0f, 0.0f, 1.0f)));
+	cam.right = Normalized(Cross(make_float3(0.0f, 0.0f, 1.0f),
+		cam.forward));
 	cam.up = Normalized(Cross(cam.forward, cam.right));
 
 	cudaCall(cudaMalloc(&d_camera, sizeof(Camera)));
@@ -174,7 +176,7 @@ __global__ void GeneratePrimaryRaysKernel(DeviceImage* image,
 	float3 filmCenter = camera->position - camera->forward;
 
 	u32 pixelX = id % image->width;
-	u32 pixelY = id / image->height;
+	u32 pixelY = id / image->width;
 
 	f32 filmX = -1.0f + 2.0f * ((f32)pixelX / (f32)image->width);
 	f32 filmY = -1.0f + 2.0f * ((f32)pixelY / (f32)image->height);
@@ -195,8 +197,24 @@ __global__ void ComputeIntersectionsKernel(DeviceImage* image,
 	u32 id = GetIndex();
 	if (IsOutOfBounds(id, image))return;
 
-	// Everything hits the 0 material for now
-	world->intersections[id].material = 0;
+	Ray ray = world->rays[id];
+	Intersection closestHit = {};
+	closestHit.t = FLT_MAX;
+
+	// Test against all Planes
+	for (u32 i = 0; i < world->planeCount; i++)
+	{
+		f32 t;
+		Plane plane = world->planes[i];
+		bool isHit = IntersectPlane(ray, plane,t);
+		if (isHit && t < closestHit.t)
+		{
+			closestHit.t = t;
+			closestHit.normal = plane.normal;
+			closestHit.material = plane.materialIndex;
+		}
+	}
+	world->intersections[id] = closestHit;
 }
 
 __global__ void ShadeIntersectionsKernel(DeviceImage* image,
@@ -206,6 +224,7 @@ __global__ void ShadeIntersectionsKernel(DeviceImage* image,
 	if (IsOutOfBounds(id, image)) return;
 
 	u32 mat = world->intersections[id].material;
+
 	image->pixels[id] = world->materials[mat].color;
 }
 

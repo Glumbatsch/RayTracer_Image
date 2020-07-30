@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <float.h>
 
 typedef int8_t i8;
 typedef int16_t i16;

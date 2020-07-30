@@ -8,8 +8,11 @@ __device__ bool IntersectPlane(const Ray& ray, const Plane& plane,
 {
 	f32 denom = Dot(plane.normal, ray.direction);
 	f32 tolerance = 0.0001f;
-	if(!((denom < - tolerance) || (denom > tolerance)))
-		return false;
-	t = (-plane.d - Dot(plane.normal, ray.origin)) / denom;
-	return true;
+	if ((denom < -tolerance) || (denom > tolerance))
+	{
+		t = (-plane.d - Dot(plane.normal, ray.origin)) / denom;
+		if (t >= 0.0f)
+			return true;
+	}
+	return false;
 }
