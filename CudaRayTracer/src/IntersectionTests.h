@@ -51,7 +51,7 @@ __device__ __forceinline__ float3 GetPointAlongRay(const Ray& ray,
 __device__ __forceinline__ float3 GetSphereNormal(const Ray& ray,
 	const Sphere& sphere, const float t)
 {
-	return Normalized(GetPointAlongRay(ray,t) - sphere.position);
+	return Normalized(GetPointAlongRay(ray, t) - sphere.position);
 }
 
 __device__ __forceinline__ float RandomBilateral(
@@ -60,21 +60,21 @@ __device__ __forceinline__ float RandomBilateral(
 	return -1.0f + 2.0f * curand_uniform(randState);
 }
 
-__device__ void Reflect(Ray& ray, float t, float3 normal, 
+__device__ void Reflect(Ray& ray, float t, float3 normal,
 	curandState* randState, float roughness)
 {
 	float3 hitPoint = GetPointAlongRay(ray, t);
 	ray.origin = hitPoint;
 
-	float3 pureReflect = Normalized(ray.direction 
+	float3 pureReflect = Normalized(ray.direction
 		- Dot(ray.direction, normal) * 2.0f * normal);
 	float3 randomDirection = make_float3(
 		RandomBilateral(randState),
 		RandomBilateral(randState),
 		RandomBilateral(randState)
 	);
-	float3 randomReflect = Normalized(normal+randomDirection);
-	ray.direction = Lerp(randomReflect, pureReflect, roughness);
+	float3 randomReflect = Normalized(normal + randomDirection);
+	ray.direction = Lerp(pureReflect, randomReflect, roughness);
 	Normalize(ray.direction);
 	ray.origin += ray.direction * 0.0001f;
 }
