@@ -1,21 +1,21 @@
 #include "Float3.h"
 
-__host__ __device__ bool compareFloat(const float a, const float b, float epsilon /*= 0.0001f*/)
+__host__ __device__ bool compareFloat(const f32 a, const f32 b, f32 epsilon /*= 0.0001f*/)
 {
 	return fabsf(a - b) < epsilon;
 }
 
-__host__ __device__ float3& operator/=(float3& v, const float scalar)
+__host__ __device__ float3& operator/=(float3& v, const f32 scalar)
 {
 	return v *= (1.0f / scalar);
 }
 
-__host__ __device__ float3 operator/(const float3& v, const float s)
+__host__ __device__ float3 operator/(const float3& v, const f32 s)
 {
 	return v * (1.0f / s);
 }
 
-__host__ __device__ float Dot(const float3& a, const float3& b)
+__host__ __device__ f32 Dot(const float3& a, const float3& b)
 {
 	return (a.x * b.x) + (a.y * b.y) + (a.z * b.z);
 }
@@ -36,6 +36,11 @@ __host__ __device__ float3 Normalized(const float3& v)
 	return r;
 }
 
+__host__ __device__ float3 Lerp(const float3& a, const float3& b, const f32 t)
+{
+	return (1.0f - t) * a + t * b;
+}
+
 __host__ __device__ float3& operator*=(float3& v, const float3& other)
 {
 	v.x *= other.x;
@@ -47,7 +52,7 @@ __host__ __device__ float3& operator*=(float3& v, const float3& other)
 __host__ __device__ float3& Normalize(float3& v)
 {
 	float3 tmp = v;
-	float len = Length(tmp);
+	f32 len = Length(tmp);
 	//v.x = v.x / len; // #Bug in threads 10, 20 ... v.x /= turns len to 0.0f. => fails if v-component is 0
 	//v.y = v.y / len;
 	//v.z = v.z / len;
@@ -81,17 +86,17 @@ __host__ __device__ float3 operator-(const float3& a, const float3& b)
 	return a + -b;
 }
 
-__host__ __device__ float Length(const float3& v)
+__host__ __device__ f32 Length(const float3& v)
 {
 	return sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
 }
 
-__host__ __device__ float Length2(const float3& v)
+__host__ __device__ f32 Length2(const float3& v)
 {
 	return v.x * v.x + v.y * v.y + v.z * v.z;
 }
 
-__host__ __device__ float3& operator*=(float3& v, const float scalar)
+__host__ __device__ float3& operator*=(float3& v, const f32 scalar)
 {
 	v.x *= scalar;
 	v.y *= scalar;
@@ -99,7 +104,7 @@ __host__ __device__ float3& operator*=(float3& v, const float scalar)
 	return v;
 }
 
-__host__ __device__ float3 operator*(const float3& v, const float scale)
+__host__ __device__ float3 operator*(const float3& v, const f32 scale)
 {
 	return make_float3(
 		v.x * scale,
@@ -108,7 +113,7 @@ __host__ __device__ float3 operator*(const float3& v, const float scale)
 	);
 }
 
-__host__ __device__ float3 operator*(const float scale, const float3& v)
+__host__ __device__ float3 operator*(const f32 scale, const float3& v)
 {
 	return v * scale;
 }

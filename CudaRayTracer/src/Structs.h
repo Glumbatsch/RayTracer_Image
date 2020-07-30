@@ -26,13 +26,17 @@ struct Camera
 
 struct Material
 {
-	float3 color;
+	float3 albedo;
+	float3 emitColor;
+	f32 roughness;
 };
 
 struct Ray 
 {
 	float3 origin;
 	float3 direction;
+	float3 color;
+	i32 bounces;
 };
 
 struct Intersection

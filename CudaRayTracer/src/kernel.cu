@@ -9,6 +9,9 @@
 #include <assert.h>
 #include <cstdlib>
 
+#include <curand.h>
+#include <curand_kernel.h>
+
 #define cudaCall(x) assert(x == cudaSuccess)
 
 #define GetIndex() threadIdx.x + blockIdx.x * blockDim.x
@@ -21,21 +24,41 @@ __global__ void DebugRaysKernel(World* world)
 	u32 c = a++ + b;
 }
 
+
+__global__ void PrintMaterialsKernel(World* world)
+{
+	u32 count = world->materialCount;
+	for (u32 i = 0; i < count; i++)
+	{
+		Material m = world->materials[i];
+		printf("Material %d: \n",i);
+		printf("\t Albedo: %1.3f %1.3f %1.3f\n", m.albedo.x, m.albedo.y, m.albedo.z);
+		printf("\t EmitColor: %1.3f %1.3f %1.3f\n", m.emitColor.x, m.emitColor.y, m.emitColor.z);
+		printf("\t Roughness: %1.3f\n\n", m.roughness);
+	}
+}
+
 u32 g_rayCount;
 float3* g_deviceImage;
 // Device Stuff
 World* d_world;
 Camera* d_camera;
 DeviceImage* d_image;
+curandState* d_randStates;
 
 void Raytrace(u32 imageWidth, u32 imageHeight);
 void CudaInit(u32 imageWidth, u32 imageHeight);
-__global__ void testkernel(World* world, Camera* cam,
-	DeviceImage* image);
+
 __global__ void GeneratePrimaryRaysKernel(DeviceImage* image,
-	World* world, Camera* camera);
+	World* world, Camera* camera, u32 bounces);
 __global__ void ComputeIntersectionsKernel(DeviceImage* image,
-	World* world, Camera* camera);
+	World* world);
+__global__ void InitCurandKernel(u32 rayCount, 
+	curandState* randStates, u64 seed);
+__global__ void ShadeIntersectionsKernel(DeviceImage* image, 
+	World* world, curandState* randStates);
+__global__ void WriteRayColorToImage(DeviceImage* image, 
+	World* world);
 
 // float3 to packed ABGR
 u32 PackColor(float3 color)
@@ -82,7 +105,9 @@ int main()
 	printf("Ray casting... ");
 	Raytrace(imageWidth, imageHeight);
 	printf(" done!");
+	printf("Writing image to file...");
 	WriteBMP(imageHeight, imageWidth);
+	printf(" done!");
 	std::system("start image.bmp");
 	return 0;
 }
@@ -92,10 +117,11 @@ void CudaInit(u32 imageWidth, u32 imageHeight)
 	g_rayCount = imageWidth * imageHeight;
 
 	Material materials[3] = {};
-	//materials[0].color = make_float3(1.0f, 0.07f, 0.8f);
-	materials[0].color = make_float3(0.1f, 0.1f, 0.1f);
-	materials[1].color = make_float3(1.0f, 0.0f, 0.0f);
-	materials[2].color = make_float3(0.0f, 0.0f, 1.0f);
+	materials[0].emitColor = make_float3(0.1f, 0.4f, 0.5f);
+	materials[1].albedo = make_float3(0.5f, 0.5f, 0.5f);
+	materials[1].roughness = 0.75f;
+	materials[2].albedo = make_float3(0.7f, 0.5f, 0.3f);
+	materials[2].roughness = 0.75f;
 
 	Plane planes[1] = {};
 
@@ -106,13 +132,12 @@ void CudaInit(u32 imageWidth, u32 imageHeight)
 
 	Sphere spheres[1] = {};
 	spheres[0].position = make_float3(0.0f, 0.0f, 0.0f);
-	spheres[0].radius = 1.0f;
+	spheres[0].radius = 0.75f;
 	spheres[0].materialIndex = 2;
 
 	World w = {};
-	w.materialCount = 2;
+	w.materialCount = sizeof(materials) / sizeof(materials[0]);
 	w.sphereCount = sizeof(spheres)/ sizeof(spheres[0]);
-	w.spheres = spheres;
 	w.planeCount = sizeof(planes)/sizeof(planes[0]);
 	w.rayCount = g_rayCount;
 
@@ -129,6 +154,7 @@ void CudaInit(u32 imageWidth, u32 imageHeight)
 		cudaMemcpyHostToDevice));
 	cudaCall(cudaMemcpy(w.materials, &materials, sizeof(materials),
 		cudaMemcpyHostToDevice));
+	PrintMaterialsKernel << <1, 1 >> > (d_world);
 	cudaCall(cudaMemcpy(w.planes, &planes, sizeof(planes),
 		cudaMemcpyHostToDevice));
 	cudaCall(cudaMemcpy(w.spheres, &spheres, sizeof(spheres),
@@ -148,8 +174,8 @@ void CudaInit(u32 imageWidth, u32 imageHeight)
 	DeviceImage image = {};
 	image.width = imageWidth;
 	image.height = imageHeight;
-	image.filmWidth = 1.0f;
-	image.filmHeight = 1.0f;
+	image.filmWidth = 0.75f;
+	image.filmHeight = 0.75f;
 
 	if (image.width > image.height)
 	{
@@ -169,22 +195,22 @@ void CudaInit(u32 imageWidth, u32 imageHeight)
 	cudaCall(cudaMalloc(&d_image, sizeof(DeviceImage)));
 	cudaCall(cudaMemcpy(d_image, &image, sizeof(DeviceImage),
 		cudaMemcpyHostToDevice));
+
+	cudaCall(cudaMalloc(&d_randStates,
+		sizeof(curandState) * g_rayCount));
 }
 
-__global__ void testkernel(World* world, Camera* cam, DeviceImage* image)
+__global__ void InitCurandKernel(u32 rayCount, 
+	curandState* randStates, u64 seed)
 {
-	printf("MaterialCount: %d \n", world->materialCount);
-	printf("SphereCount: %d \n", world->sphereCount);
-	printf("PlaneCount: %d \n", world->planeCount);
-	float3 n = world->planes[0].normal;
-	printf("Planes[0] : %1.0f %1.0f %1.0f %d \n", n.x, n.y,
-		n.z, world->planes[0].materialIndex);
+	u32 id = GetIndex();
+	if (id >= rayCount) return;
 
-	printf("imageSize: %dx%d", image->width, image->height);
+	curand_init(seed, id, 0, &randStates[id]);
 }
 
 __global__ void GeneratePrimaryRaysKernel(DeviceImage* image,
-	World* world, Camera* camera)
+	World* world, Camera* camera, u32 bounces)
 {
 	u32 id = GetIndex();
 	if (IsOutOfBounds(id, image)) return;
@@ -204,16 +230,20 @@ __global__ void GeneratePrimaryRaysKernel(DeviceImage* image,
 	Ray r = {};
 	r.origin = camera->position;
 	r.direction = Normalized(filmP - camera->position);
+	r.bounces = bounces;
+	r.color = make_float3(1.0f, 1.0f, 1.0f);
 	world->rays[id] = r;
 }
 
 __global__ void ComputeIntersectionsKernel(DeviceImage* image,
-	World* world, Camera* camera)
+	World* world)
 {
 	u32 id = GetIndex();
 	if (IsOutOfBounds(id, image))return;
 
 	Ray ray = world->rays[id];
+	if (ray.bounces <= 0) return;
+
 	Intersection closestHit = {};
 	closestHit.t = FLT_MAX;
 
@@ -238,7 +268,7 @@ __global__ void ComputeIntersectionsKernel(DeviceImage* image,
 		bool isHit = IntersectSphere(ray, sphere, t);
 		if (isHit && t < closestHit.t)
 		{
-			closestHit.t;
+			closestHit.t = t;
 			closestHit.material = sphere.materialIndex;
 			closestHit.normal = GetSphereNormal(ray,sphere,t);
 		}
@@ -247,26 +277,61 @@ __global__ void ComputeIntersectionsKernel(DeviceImage* image,
 }
 
 __global__ void ShadeIntersectionsKernel(DeviceImage* image,
-	World* world, Camera* camera)
+	World* world, curandState* randStates)
 {
 	u32 id = GetIndex();
 	if (IsOutOfBounds(id, image)) return;
 
-	u32 mat = world->intersections[id].material;
+	Ray r = world->rays[id];
+	if (r.bounces-- <= 0) return;
 
-	image->pixels[id] = world->materials[mat].color;
+	Intersection intersection = world->intersections[id];
+	Material mat = world->materials[intersection.material];
+	r.color *= (mat.albedo + mat.emitColor);
+
+	Reflect(r, intersection.t, intersection.normal, &randStates[id],
+		mat.roughness);
+	if (Length2(mat.emitColor) > 0.0f)
+	{
+		if (intersection.material != 0)
+			printf("Encountered emissive material %d at id %d.", intersection.material, id);
+		r.bounces = -1;
+	}
+
+	world->rays[id] = r;
 }
 
+__global__ void WriteRayColorToImage(DeviceImage* image,
+	World* world)
+{
+	u32 id = GetIndex();
+	if (IsOutOfBounds(id, image)) return;
+
+	Ray r = world->rays[id];
+	image->pixels[id] = r.color;
+}
 
 void Raytrace(u32 imageWidth, u32 imageHeight)
 {
-	u32 threadCount = 1024;
+	// #Note With a higher block size the InitCurandKernel launch will fail because it requires an insane ~6kb stack frame...
+	u32 threadCount = 128;
 	u32 blockCount = imageWidth * imageHeight / threadCount + 1;
+	InitCurandKernel << <blockCount, threadCount>> > (g_rayCount, d_randStates, 1234);
+	u32 maxBounces = 2;
+	
 	GeneratePrimaryRaysKernel << <blockCount, threadCount >> >
-		(d_image, d_world, d_camera);
-	ComputeIntersectionsKernel<<<blockCount, threadCount>>>
-		(d_image, d_world, d_camera);
-	ShadeIntersectionsKernel<<<blockCount,threadCount>>>
-		(d_image, d_world, d_camera);
+		(d_image, d_world, d_camera, maxBounces);
+
+	for (u32 i = 0; i < maxBounces; i++)
+	{
+		ComputeIntersectionsKernel<<<blockCount, threadCount>>>
+			(d_image, d_world);
+
+		ShadeIntersectionsKernel<<<blockCount,threadCount>>>
+			(d_image, d_world, d_randStates);
+	}
+
+	WriteRayColorToImage << <blockCount, threadCount >> >
+		(d_image, d_world);
 }
 // #Todo remove unnecessary parameters from kernels (e.g. image)
