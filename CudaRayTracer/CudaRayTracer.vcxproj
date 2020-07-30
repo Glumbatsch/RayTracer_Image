@@ -92,7 +92,6 @@
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <CudaCompile Include="src\Float3.cu" />
     <CudaCompile Include="src\kernel.cu" />
   </ItemGroup>
   <ItemGroup>
