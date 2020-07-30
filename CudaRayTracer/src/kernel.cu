@@ -191,6 +191,10 @@ void CudaInit(int imageWidth, int imageHeight)
 	cudaCall(cudaMalloc(&image.pixels,
 		sizeof(float3) * g_rayCount));
 	g_deviceImage = image.pixels;
+	// init image to black
+	cudaCall(cudaMemset(g_deviceImage, 0, 
+		sizeof(float3) * g_rayCount));
+
 
 	cudaCall(cudaMalloc(&d_image, sizeof(DeviceImage)));
 	cudaCall(cudaMemcpy(d_image, &image, sizeof(DeviceImage),
@@ -300,13 +304,13 @@ __global__ void ShadeIntersectionsKernel(DeviceImage* image,
 }
 
 __global__ void WriteRayColorToImage(DeviceImage* image,
-	World* world)
+	World* world, float contributionPerPixel)
 {
 	int id = GetIndex();
 	if (IsOutOfBounds(id, image)) return;
 
 	Ray r = world->rays[id];
-	image->pixels[id] = r.color;
+	image->pixels[id] += r.color * contributionPerPixel;
 }
 
 void Raytrace(int imageWidth, int imageHeight)
@@ -315,21 +319,27 @@ void Raytrace(int imageWidth, int imageHeight)
 	int threadCount = 128;
 	int blockCount = imageWidth * imageHeight / threadCount + 1;
 	InitCurandKernel << <blockCount, threadCount>> > (g_rayCount, d_randStates, 1234);
-	int maxBounces = 8;
 	
-	GeneratePrimaryRaysKernel << <blockCount, threadCount >> >
-		(d_image, d_world, d_camera, maxBounces);
+	int maxBounces = 8;
+	int samplesPerPixel = 16;
+	float contributionPerPixel = 1.0f / (float)samplesPerPixel;
 
-	for (int i = 0; i < maxBounces; i++)
+	for (int s = 0; s < samplesPerPixel; s++)
 	{
-		ComputeIntersectionsKernel<<<blockCount, threadCount>>>
-			(d_image, d_world);
+		GeneratePrimaryRaysKernel << <blockCount, threadCount >> >
+			(d_image, d_world, d_camera, maxBounces);
 
-		ShadeIntersectionsKernel<<<blockCount,threadCount>>>
-			(d_image, d_world, d_randStates);
+		for (int i = 0; i < maxBounces; i++)
+		{
+			ComputeIntersectionsKernel<<<blockCount, threadCount>>>
+				(d_image, d_world);
+
+			ShadeIntersectionsKernel<<<blockCount,threadCount>>>
+				(d_image, d_world, d_randStates);
+		}
+
+		WriteRayColorToImage << <blockCount, threadCount >> >
+			(d_image, d_world, contributionPerPixel);
 	}
-
-	WriteRayColorToImage << <blockCount, threadCount >> >
-		(d_image, d_world);
 }
 // #Todo remove unnecessary parameters from kernels (e.g. image)
