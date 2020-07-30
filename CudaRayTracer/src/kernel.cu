@@ -46,9 +46,15 @@ int main()
 	CudaInit();
 	Raytrace();
 	cudaCall(cudaDeviceSynchronize());
+	printf("Writing image to file...");
+	TimeStamp start = std::chrono::high_resolution_clock::now();
 	WriteBMP(g_cfg,g_deviceImage);
-	
-	printf("\nTotal time: %3.3f seconds.", g_totalSeconds);
+	TimeStamp end = std::chrono::high_resolution_clock::now();
+	double dt = GetElapsedSeconds(start,end);
+	g_totalSeconds += dt;
+	printf(" done! That took %3.3f seconds.\n", dt);
+
+	printf("\nTotal time: %3.3f seconds.\n\n", g_totalSeconds);
 
 	Sleep(1000); // #hack sometimes os can't open the image
 	std::system("start image.bmp");
@@ -355,5 +361,6 @@ void Raytrace()
 	cudaCall(cudaDeviceSynchronize());
 	endTime = std::chrono::high_resolution_clock::now();
 	dt = GetElapsedSeconds(startTime,endTime);
+	g_totalSeconds += dt;
 	printf(" done! That took %3.3f seconds.\n", dt);
 }

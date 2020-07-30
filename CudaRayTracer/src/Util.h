@@ -61,8 +61,7 @@ int PackColor(float3 color)
 
 void WriteBMP(Config cfg, float3* deviceImage)
 {
-	printf("Writing image to file...");
-	auto startTime = std::chrono::high_resolution_clock::now();
+	
 
 	int rayCount = cfg.imageWidth * cfg.imageHeight;
 	size_t floatImageSize = sizeof(float3) * rayCount;
@@ -116,10 +115,6 @@ void WriteBMP(Config cfg, float3* deviceImage)
 	stbi_flip_vertically_on_write(true);
 	stbi_write_bmp("image.bmp", imageWidth, imageHeight, 4,
 		(void*)pixels);
-
-	auto endTime = std::chrono::high_resolution_clock::now();
-	auto mili = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
-	printf(" done! That took %3.3f seconds.\n", (double)mili / 1000.0);
 }
 
 Plane CreatePlane(const float3& a, const float3& b, const float3& c)
