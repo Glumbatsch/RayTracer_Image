@@ -358,7 +358,15 @@ __global__ void WriteRayColorToImage(DeviceImage* image,
 
 void Raytrace()
 {
+#ifndef _DEBUG
+	// Release
 	int threadCount = 1024;
+#else
+	// Debug
+	// In debug mode curand_init() requires an insane stack frame
+	// so we need to limit the block size.
+	int threadCount = 128; 
+#endif 
 
 	int imageWidth = g_cfg.imageWidth;
 	int imageHeight = g_cfg.imageHeight;

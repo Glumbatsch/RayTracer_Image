@@ -11,7 +11,7 @@ typedef std::chrono::steady_clock::time_point TimeStamp;
 
 #ifndef _DEBUG
 // Release
-#define cudaCall(x) x
+#define cudaCall(x) (x)
 #else
 // Debug
 #define cudaCall(x) (assert(x == cudaSuccess))
@@ -88,8 +88,6 @@ int PackColor(float3 color)
 
 void WriteBMP(Config cfg, float3* deviceImage)
 {
-	
-
 	int rayCount = cfg.imageWidth * cfg.imageHeight;
 	size_t floatImageSize = sizeof(float3) * rayCount;
 	
