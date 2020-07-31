@@ -43,6 +43,7 @@ struct Intersection
 	float3 normal;
 	float t;
 	int material;
+	int id;
 };
 
 struct Plane {
@@ -85,4 +86,5 @@ struct Config
 
 	// [Optimizations]
 	bool bUseFastRand;
+	bool bSortIntersections;
 };

@@ -13,12 +13,16 @@
 #include <curand.h>
 #include <curand_kernel.h>
 
+#include <thrust\device_ptr.h>
+#include <thrust\sort.h>
+
 #include "OpenImageDenoise\oidn.h"
 
 
 double g_totalSeconds = 0.0;
 Config g_cfg;
 float3* g_deviceImage;
+thrust::device_ptr<Intersection> g_deviceIntersections;
 // Device Stuff
 World* d_world;
 Camera* d_camera;
@@ -36,6 +40,8 @@ __global__ void ComputeIntersectionsKernel(DeviceImage* image,
 __global__ void InitCurandKernel(int rayCount,
 	curandState* randStates, int seed, bool bUseFastRand);
 __global__ void ShadeIntersectionsKernel(DeviceImage* image,
+	World* world, curandState* randStates);
+__global__ void ShadeIntersectionsKernelSorted(DeviceImage* image,
 	World* world, curandState* randStates);
 __global__ void WriteRayColorToImage(DeviceImage* image,
 	World* world, float contributionPerPixel);
@@ -129,7 +135,7 @@ void CudaInit()
 	cudaCall(cudaMalloc(&w.rays, sizeof(Ray) * rayCount));
 	cudaCall(cudaMalloc(&w.intersections,
 		sizeof(Intersection) * rayCount));
-
+	g_deviceIntersections = thrust::device_pointer_cast(w.intersections);
 
 	cudaCall(cudaMemcpy(d_world, &w, sizeof(World),
 		cudaMemcpyHostToDevice));
@@ -276,6 +282,7 @@ __global__ void ComputeIntersectionsKernel(DeviceImage* image,
 			closestHit.normal = GetSphereNormal(ray, sphere, t);
 		}
 	}
+	closestHit.id = id;
 	world->intersections[id] = closestHit;
 }
 
@@ -286,9 +293,9 @@ __global__ void ShadeIntersectionsKernel(DeviceImage* image,
 	if (IsOutOfBounds(id, image)) return;
 
 	Ray r = world->rays[id];
+	Intersection intersection = world->intersections[id];
 	if (r.bounces <= 0) return;
 
-	Intersection intersection = world->intersections[id];
 	Material mat = world->materials[intersection.material];
 
 	if (Length2(mat.emitColor) > 0.0f)
@@ -305,6 +312,35 @@ __global__ void ShadeIntersectionsKernel(DeviceImage* image,
 	}
 	world->rays[id] = r;
 }
+
+__global__ void ShadeIntersectionsKernelSorted(DeviceImage* image,
+	World* world, curandState* randStates)
+{
+	int id = GetIndex();
+	if (IsOutOfBounds(id, image)) return;
+
+	Intersection intersection = world->intersections[id];
+
+	Ray r = world->rays[intersection.id];
+	if (r.bounces <= 0) return;
+
+	Material mat = world->materials[intersection.material];
+
+	if (Length2(mat.emitColor) > 0.0f)
+	{
+		r.color *= mat.emitColor;
+		r.bounces = -1;
+	}
+	else
+	{
+		Reflect(r, intersection.t, intersection.normal, &randStates[id],
+			mat.roughness);
+		r.color *= (mat.albedo + mat.emitColor);
+		r.bounces -= 1;
+	}
+	world->rays[intersection.id] = r;
+}
+
 
 __global__ void WriteRayColorToImage(DeviceImage* image,
 	World* world, float contributionPerPixel)
@@ -341,6 +377,8 @@ void Raytrace()
 	int samplesPerPixel = g_cfg.samplesPerPixel;
 	float contributionPerPixel = 1.0f / (float)samplesPerPixel;
 
+	bool bSortIntersections = g_cfg.bSortIntersections;
+
 	printf("Ray casting... ");
 	// #Time
 	startTime = std::chrono::high_resolution_clock::now();
@@ -353,9 +391,19 @@ void Raytrace()
 		{
 			ComputeIntersectionsKernel << <blockCount, threadCount >> >
 				(d_image, d_world);
-
-			ShadeIntersectionsKernel << <blockCount, threadCount >> >
-				(d_image, d_world, d_randStates);
+			
+			if (bSortIntersections)
+			{
+				thrust::sort(g_deviceIntersections,
+					g_deviceIntersections + rayCount);
+				ShadeIntersectionsKernelSorted<<<blockCount,threadCount>>>
+					(d_image, d_world, d_randStates);
+			}
+			else
+			{
+				ShadeIntersectionsKernel << <blockCount, threadCount >> >
+					(d_image, d_world, d_randStates);
+			}
 		}
 
 		WriteRayColorToImage << <blockCount, threadCount >> >

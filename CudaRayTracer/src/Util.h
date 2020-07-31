@@ -37,9 +37,9 @@ void LoadConfig(const char* fileName, Config& cfg)
 
 	cfg.bUseFastRand = GetPrivateProfileInt("Optimizations",
 		"bUseFastRand", 1, fileName);
+	cfg.bSortIntersections = GetPrivateProfileInt("Optimizations",
+		"bSortIntersections", 1, fileName);
 
-	// Print \x1b - escape for text color : 0m = standard
-	// 1;32 = bold green | 1;31 = bold red
 	const char en[] = "enabled";
 	const char dis[] = "disabled";
 	printf("Starting the Path tracer with the following configuration:\n\n");
@@ -50,6 +50,8 @@ void LoadConfig(const char* fileName, Config& cfg)
 	printf("\tDenoising is %s.\n", currentChoice);
 	currentChoice = cfg.bUseFastRand ? en : dis;
 	printf("\tFast cuRand is %s.\n", currentChoice);
+	currentChoice = cfg.bSortIntersections ? en : dis;
+	printf("\tIntersection sorting is %s.\n", currentChoice);
 	printf("\n");
 }
 // float3 to packed ABGR
@@ -137,4 +139,11 @@ double GetElapsedSeconds(TimeStamp& start,TimeStamp& end)
 {
 	__int64 mili = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
 	return (double)mili / 1000.0;
+}
+
+// Comparator for sorting intersections by material
+__device__ bool operator<(const Intersection& a,
+	const Intersection& b)
+{
+	return a.material < b.material;
 }
