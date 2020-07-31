@@ -40,8 +40,8 @@ void LoadConfig(const char* fileName, Config& cfg)
 
 	// Print \x1b - escape for text color : 0m = standard
 	// 1;32 = bold green | 1;31 = bold red
-	const char en[] = "\x1b[1;32menabled\x1b[0m";
-	const char dis[] = "\x1b[1;31mdisabled\x1b[0m";
+	const char en[] = "enabled";
+	const char dis[] = "disabled";
 	printf("Starting the Path tracer with the following configuration:\n\n");
 	printf("\tImage: %dx%d\n", cfg.imageWidth, cfg.imageHeight);
 	printf("\tSamples per pixel: %d\n", cfg.samplesPerPixel);
