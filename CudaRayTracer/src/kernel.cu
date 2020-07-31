@@ -48,16 +48,16 @@ __global__ void WriteRayColorToImage(DeviceImage* image,
 
 int main()
 {
-	LoadConfig("./rt.ini",g_cfg);
+	LoadConfig("./rt.ini", g_cfg);
 
 	CudaInit();
 	Raytrace();
 	cudaCall(cudaDeviceSynchronize());
 	printf("Writing image to file...");
 	TimeStamp start = std::chrono::high_resolution_clock::now();
-	WriteBMP(g_cfg,g_deviceImage);
+	WriteBMP(g_cfg, g_deviceImage);
 	TimeStamp end = std::chrono::high_resolution_clock::now();
-	double dt = GetElapsedSeconds(start,end);
+	double dt = GetElapsedSeconds(start, end);
 	g_totalSeconds += dt;
 	printf(" done! That took %3.3f seconds.\n", dt);
 
@@ -147,32 +147,33 @@ void CudaInit()
 		cudaMemcpyHostToDevice));
 
 	Camera cam = {};
-	cam.position = make_float3(0.0f, -12.5f, 0.0f);
+	cam.position = make_float3(0.0f, g_cfg.cameraDistance, 0.0f);
 	cam.forward = Normalized(cam.position);
 	cam.right = Normalized(Cross(make_float3(0.0f, 0.0f, 1.0f),
 		cam.forward));
 	cam.up = Normalized(Cross(cam.forward, cam.right));
+	cam.film = make_float3(g_cfg.filmWidth, g_cfg.filmHeight,
+		g_cfg.filmDistance);
+	
+	DeviceImage image = {};
+	image.width = g_cfg.imageWidth;
+	image.height = g_cfg.imageHeight;
+
+	if (image.width > image.height)
+	{
+		cam.film.y = cam.film.x *
+			((float)image.height / (float)image.width);
+	}
+	else if (image.width < image.height)
+	{
+		cam.film.x = cam.film.y*
+			((float)image.width / (float)image.height);
+	}
 
 	cudaCall(cudaMalloc(&d_camera, sizeof(Camera)));
 	cudaCall(cudaMemcpy(d_camera, &cam, sizeof(Camera),
 		cudaMemcpyHostToDevice));
 
-	DeviceImage image = {};
-	image.width = g_cfg.imageWidth;
-	image.height = g_cfg.imageHeight;
-	image.filmWidth = 1.0f;
-	image.filmHeight = 1.0f;
-
-	if (image.width > image.height)
-	{
-		image.filmHeight = image.filmWidth *
-			((float)image.height / (float)image.width);
-	}
-	else if (image.width < image.height)
-	{
-		image.filmWidth = image.filmHeight *
-			((float)image.width / (float)image.height);
-	}
 
 	cudaCall(cudaMalloc(&image.pixels,
 		sizeof(float3) * rayCount));
@@ -191,7 +192,7 @@ void CudaInit()
 }
 
 __global__ void InitCurandKernel(int rayCount,
-	curandState* randStates, int seed,bool bUseFastRand)
+	curandState* randStates, int seed, bool bUseFastRand)
 {
 	int id = GetIndex();
 	if (id >= rayCount) return;
@@ -216,7 +217,10 @@ __global__ void GeneratePrimaryRaysKernel(DeviceImage* image,
 	int id = GetIndex();
 	if (IsOutOfBounds(id, image)) return;
 
-	float3 filmCenter = camera->position - camera->forward;
+	// x,y = width, height; z = distance
+	float3 film = camera->film;
+
+	float3 filmCenter = camera->position - camera->forward * film.z;
 
 	int pixelX = id % image->width;
 	int pixelY = id / image->width;
@@ -233,8 +237,8 @@ __global__ void GeneratePrimaryRaysKernel(DeviceImage* image,
 	filmY += RandomBilateral(&randStates[id]) * halfPixelHeight;
 
 	float3 filmP = filmCenter +
-		filmX * camera->right * image->filmWidth * 0.5f +
-		filmY * camera->up * image->filmHeight * 0.5f;
+		filmX * camera->right * film.x * 0.5f +
+		filmY * camera->up * film.y * 0.5f;
 
 	Ray r = {};
 	r.origin = camera->position;
@@ -369,7 +373,7 @@ void Raytrace()
 		(rayCount, d_randStates, 1234, g_cfg.bUseFastRand);
 	cudaCall(cudaDeviceSynchronize());
 	TimeStamp endTime = std::chrono::high_resolution_clock::now();
-	double dt = GetElapsedSeconds(startTime,endTime);
+	double dt = GetElapsedSeconds(startTime, endTime);
 	g_totalSeconds += dt;
 	printf(" done! That took %3.3f seconds.\n", dt);
 
@@ -391,12 +395,12 @@ void Raytrace()
 		{
 			ComputeIntersectionsKernel << <blockCount, threadCount >> >
 				(d_image, d_world);
-			
+
 			if (bSortIntersections)
 			{
 				thrust::sort(g_deviceIntersections,
 					g_deviceIntersections + rayCount);
-				ShadeIntersectionsKernelSorted<<<blockCount,threadCount>>>
+				ShadeIntersectionsKernelSorted << <blockCount, threadCount >> >
 					(d_image, d_world, d_randStates);
 			}
 			else
@@ -412,7 +416,7 @@ void Raytrace()
 
 	cudaCall(cudaDeviceSynchronize());
 	endTime = std::chrono::high_resolution_clock::now();
-	dt = GetElapsedSeconds(startTime,endTime);
+	dt = GetElapsedSeconds(startTime, endTime);
 	g_totalSeconds += dt;
 	printf(" done! That took %3.3f seconds.\n", dt);
 }

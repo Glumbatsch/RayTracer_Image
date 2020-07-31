@@ -28,6 +28,20 @@ void LoadConfig(const char* fileName, Config& cfg)
 	cfg.imageHeight = GetPrivateProfileInt("Image", "imageHeight",
 		720, fileName);
 
+	char buffer[256] = {};
+	GetPrivateProfileString("Camera", "filmWidth",
+		"1.0f", buffer, 256, fileName);
+	cfg.filmWidth = (float)atof(buffer);
+	GetPrivateProfileString("Camera", "filmHeight",
+		"1.0f", buffer, 256, fileName);
+	cfg.filmHeight = (float)atof(buffer);
+	GetPrivateProfileString("Camera", "filmDistance",
+		"1.0ff", buffer, 256, fileName);
+	cfg.filmDistance = (float)atof(buffer);
+	GetPrivateProfileString("Camera", "cameraDistance",
+		"12.5f", buffer, 256, fileName);
+	cfg.cameraDistance = (float)atof(buffer);
+
 	cfg.samplesPerPixel = GetPrivateProfileInt("RT",
 		"samplesPerPixel", 32, fileName);
 	cfg.maxBounces = GetPrivateProfileInt("RT", "maxBounces",
@@ -44,6 +58,10 @@ void LoadConfig(const char* fileName, Config& cfg)
 	const char dis[] = "disabled";
 	printf("Starting the Path tracer with the following configuration:\n\n");
 	printf("\tImage: %dx%d\n", cfg.imageWidth, cfg.imageHeight);
+	printf("\tCamera: Film of %3.3fx%3.3f at distance %3.3f\n",
+		cfg.filmWidth,cfg.filmHeight,cfg.filmDistance);
+	printf("\tCamera distance (from origin along the y-axis): %3.3f\n",
+		cfg.cameraDistance);
 	printf("\tSamples per pixel: %d\n", cfg.samplesPerPixel);
 	printf("\tMaximum bounces per path: %d\n", cfg.maxBounces);
 	const char* currentChoice = cfg.bDenoise ? en : dis;

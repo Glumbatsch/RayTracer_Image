@@ -10,8 +10,6 @@ struct Image {
 struct DeviceImage {
 	int width;
 	int height;
-	float filmWidth;
-	float filmHeight;
 	float3* pixels;
 };
 
@@ -21,6 +19,7 @@ struct Camera
 	float3 up;
 	float3 right;
 	float3 forward;
+	float3 film;
 };
 
 struct Material
@@ -78,6 +77,12 @@ struct Config
 	// [Image]
 	int imageWidth;
 	int imageHeight;
+
+	// [Camera]
+	float filmWidth;
+	float filmHeight;
+	float filmDistance;
+	float cameraDistance;
 
 	// [RT]
 	int samplesPerPixel;
