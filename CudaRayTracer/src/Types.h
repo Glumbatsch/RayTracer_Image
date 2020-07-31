@@ -1,8 +1,9 @@
 #pragma once
 #include <cstdint>
 #include <float.h>
+
 // #Note nsight plugin does not display correct values in the 
-// debugger, when using "non-standard" types.
+// debugger, when using "non-standard" types, so these are not used.
 typedef int8_t i8;
 typedef int16_t i16;
 typedef int32_t i32;

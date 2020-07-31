@@ -9,6 +9,9 @@
 
 typedef std::chrono::steady_clock::time_point TimeStamp;
 
+//////////////////////////////////////////////////////////////////////////
+// #HelperMacros
+//////////////////////////////////////////////////////////////////////////
 #ifndef _DEBUG
 // Release
 #define cudaCall(x) (x)
@@ -20,6 +23,9 @@ typedef std::chrono::steady_clock::time_point TimeStamp;
 #define GetIndex() (threadIdx.x + blockIdx.x * blockDim.x)
 #define IsOutOfBounds(id, image) (id >= image->width * image->height)
 
+//////////////////////////////////////////////////////////////////////////
+// #UtilityFunctions
+//////////////////////////////////////////////////////////////////////////
 void LoadConfig(const char* fileName, Config& cfg)
 {
 	// Loading
@@ -72,6 +78,7 @@ void LoadConfig(const char* fileName, Config& cfg)
 	printf("\tIntersection sorting is %s.\n", currentChoice);
 	printf("\n");
 }
+
 // float3 to packed ABGR
 int PackColor(float3 color)
 {

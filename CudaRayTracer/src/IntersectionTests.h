@@ -5,6 +5,10 @@
 #include <curand.h>
 #include <curand_kernel.h>
 
+//////////////////////////////////////////////////////////////////////////
+// #IntersectionTests (taken from "Real Time Collision Detection" by Christer Ericson)
+//////////////////////////////////////////////////////////////////////////
+
 __device__ bool IntersectPlane(const Ray& ray, const Plane& plane,
 	float& t)
 {
@@ -41,6 +45,10 @@ __device__ bool IntersectSphere(const Ray& ray,
 
 	return true;
 }
+
+//////////////////////////////////////////////////////////////////////////
+// #IntersectionRelatedFunctions
+//////////////////////////////////////////////////////////////////////////
 
 __device__ __forceinline__ float3 GetPointAlongRay(const Ray& ray,
 	const float t)
@@ -79,6 +87,7 @@ __device__ void Reflect(Ray& ray, float t, float3 normal,
 	ray.origin += ray.direction * 0.0001f;
 }
 
+// Taken from Ray Tracing in a Weekend by Peter Shirley
 __device__ bool Refract(const Ray &ray, const float3 normal, 
 	float niOverNt, float3& refractedDirection)
 {
@@ -93,6 +102,7 @@ __device__ bool Refract(const Ray &ray, const float3 normal,
 	return false;
 }
 
+// Taken from Ray Tracing in a Weekend by Peter Shirley
 __device__ float Schlick(float cosine, float refractionIndex)
 {
 	float r0 = (1.0f - refractionIndex) / (1.0f + refractionIndex);
@@ -100,6 +110,7 @@ __device__ float Schlick(float cosine, float refractionIndex)
 	return r0 + (1.0f - r0) * powf((1.0f-cosine),5.0f);
 }
 
+// Taken from Ray Tracing in a Weekend by Peter Shirley
 __device__ void ReflectOrRefract(Ray& ray, float3 normal,
 	curandState* randState, const float refractionIndex)
 {

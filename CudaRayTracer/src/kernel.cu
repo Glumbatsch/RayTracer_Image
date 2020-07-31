@@ -18,7 +18,9 @@
 
 #include "OpenImageDenoise\oidn.h"
 
-
+//////////////////////////////////////////////////////////////////////////
+// #Globals 
+//////////////////////////////////////////////////////////////////////////
 double g_totalSeconds = 0.0;
 Config g_cfg;
 float3* g_deviceImage;
@@ -29,7 +31,10 @@ Camera* d_camera;
 DeviceImage* d_image;
 curandState* d_randStates;
 
-void Raytrace();
+//////////////////////////////////////////////////////////////////////////
+// #ForwardDeclarations
+//////////////////////////////////////////////////////////////////////////
+void Render();
 void CudaInit();
 
 __global__ void GeneratePrimaryRaysKernel(DeviceImage* image,
@@ -44,12 +49,16 @@ __global__ void ShadeIntersectionsKernel(DeviceImage* image,
 __global__ void WriteRayColorToImage(DeviceImage* image,
 	World* world, float contributionPerPixel);
 
+//////////////////////////////////////////////////////////////////////////
+// #Host
+//////////////////////////////////////////////////////////////////////////
+
 int main()
 {
 	LoadConfig("./rt.ini", g_cfg);
 
 	CudaInit();
-	Raytrace();
+	Render();
 	cudaCall(cudaDeviceSynchronize());
 	printf("Writing image to file...");
 	TimeStamp start = std::chrono::high_resolution_clock::now();
@@ -65,6 +74,7 @@ int main()
 	return 0;
 }
 
+// Init all the device memory and setup the scene.
 void CudaInit()
 {
 	int rayCount = g_cfg.imageWidth * g_cfg.imageHeight;
@@ -206,6 +216,83 @@ void CudaInit()
 		sizeof(curandState) * rayCount));
 }
 
+// Renders the scene.
+// After completion the back buffer will be filled with the image.
+void Render()
+{
+#ifndef _DEBUG
+	// Release
+	int threadCount = 1024;
+#else
+	// Debug
+	// In debug mode curand_init() requires an insane stack frame
+	// so we need to limit the block size.
+	int threadCount = 128; 
+#endif 
+
+	// Load config
+	int imageWidth = g_cfg.imageWidth;
+	int imageHeight = g_cfg.imageHeight;
+	int rayCount = imageWidth * imageHeight;
+	int maxBounces = g_cfg.maxBounces;
+	int samplesPerPixel = g_cfg.samplesPerPixel;
+	float contributionPerPixel = 1.0f / (float)samplesPerPixel;
+	bool bSortIntersections = g_cfg.bSortIntersections;
+
+	int blockCount = imageWidth * imageHeight / threadCount + 1;
+
+
+	// Init curandStates:
+	printf("Initializing cuRand states... ");
+	TimeStamp startTime = std::chrono::high_resolution_clock::now();
+	InitCurandKernel << <blockCount, threadCount >> >
+		(rayCount, d_randStates, 1234, g_cfg.bUseFastRand);
+	cudaCall(cudaDeviceSynchronize());
+	TimeStamp endTime = std::chrono::high_resolution_clock::now();
+	double dt = GetElapsedSeconds(startTime, endTime);
+	g_totalSeconds += dt;
+	printf(" done! That took %3.3f seconds.\n", dt);
+
+
+	// Do the path tracing loop
+	printf("Ray casting... ");
+	startTime = std::chrono::high_resolution_clock::now();
+	for (int s = 0; s < samplesPerPixel; s++)
+	{
+		GeneratePrimaryRaysKernel << <blockCount, threadCount >> >
+			(d_image, d_world, d_camera, maxBounces, d_randStates);
+
+		// iterate over bounces
+		for (int i = 0; i < maxBounces; i++)
+		{
+			ComputeIntersectionsKernel << <blockCount, threadCount >> >
+				(d_image, d_world);
+
+			if (bSortIntersections)
+			{
+				thrust::sort(g_deviceIntersections,
+					g_deviceIntersections + rayCount);
+			}
+			ShadeIntersectionsKernel << <blockCount, threadCount >> >
+				(d_image, d_world, d_randStates,bSortIntersections);
+		}
+
+		WriteRayColorToImage << <blockCount, threadCount >> >
+			(d_image, d_world, contributionPerPixel);
+	}
+
+	cudaCall(cudaDeviceSynchronize());
+	endTime = std::chrono::high_resolution_clock::now();
+	dt = GetElapsedSeconds(startTime, endTime);
+	g_totalSeconds += dt;
+	printf(" done! That took %3.3f seconds.\n", dt);
+}
+
+//////////////////////////////////////////////////////////////////////////
+// #Kernels
+//////////////////////////////////////////////////////////////////////////
+
+// Initialize the curandStates for later use.
 __global__ void InitCurandKernel(int rayCount,
 	curandState* randStates, int seed, bool bUseFastRand)
 {
@@ -225,6 +312,7 @@ __global__ void InitCurandKernel(int rayCount,
 	}
 }
 
+// Generate the primary Rays (the ones coming from the camera).
 __global__ void GeneratePrimaryRaysKernel(DeviceImage* image,
 	World* world, Camera* camera, int bounces,
 	curandState* randStates)
@@ -232,29 +320,33 @@ __global__ void GeneratePrimaryRaysKernel(DeviceImage* image,
 	int id = GetIndex();
 	if (IsOutOfBounds(id, image)) return;
 
-	// x,y = width, height; z = distance
-	float3 film = camera->film;
-
-	float3 filmCenter = camera->position - camera->forward * film.z;
-
+	// Pixel indices
 	int pixelX = id % image->width;
 	int pixelY = id / image->width;
 
+	// Normalized Pixel indices = pixelX: [0,imageWidth], filmX [-1.0f,1.0f]
 	float filmX = -1.0f + 2.0f *
 		((float)pixelX / (float)image->width);
 	float filmY = -1.0f + 2.0f *
 		((float)pixelY / (float)image->height);
 
+	// Half sizes of a pixel
 	float halfPixelWidth = 0.5f * (1.0f / (float)image->width);
 	float halfPixelHeight = 0.5f * (1.0f / (float)image->height);
 
+	// x,y = width, height; z = distance
+	float3 film = camera->film;
+	// Jitter the samples by [-1.0f,1.0f] * halfPixel
 	filmX += RandomBilateral(&randStates[id]) * halfPixelWidth;
 	filmY += RandomBilateral(&randStates[id]) * halfPixelHeight;
 
+	// Ray target location on the camera film
+	float3 filmCenter = camera->position - camera->forward * film.z;
 	float3 filmP = filmCenter +
 		filmX * camera->right * film.x * 0.5f +
 		filmY * camera->up * film.y * 0.5f;
 
+	// Construct the actual ray
 	Ray r = {};
 	r.origin = camera->position;
 	r.direction = Normalized(filmP - camera->position);
@@ -263,6 +355,7 @@ __global__ void GeneratePrimaryRaysKernel(DeviceImage* image,
 	world->rays[id] = r;
 }
 
+// Compute the intersections between the current rays and the scene.
 __global__ void ComputeIntersectionsKernel(DeviceImage* image,
 	World* world)
 {
@@ -305,6 +398,8 @@ __global__ void ComputeIntersectionsKernel(DeviceImage* image,
 	world->intersections[id] = closestHit;
 }
 
+// Shade the intersections -> i.e. attenuate the ray color and generate 
+// the next generation of bounces in place
 __global__ void ShadeIntersectionsKernel(DeviceImage* image,
 	World* world, curandState* randStates, bool bSorted)
 {
@@ -316,23 +411,28 @@ __global__ void ShadeIntersectionsKernel(DeviceImage* image,
 	int rayId = bSorted ? intersection.id : id;
 
 	Ray r = world->rays[rayId];
-	Material mat = world->materials[intersection.material];
 	if (r.bounces <= 0) return;
+
+	Material mat = world->materials[intersection.material];
 	
+	// Decide on how to shade the intersection based on the material
 	if (mat.refractionIndex > 0.0f)
 	{
-		r.color *= mat.albedo;
+		// Refractive Material
+		r.color *= mat.albedo; // should be around (1.0f,1.0f,1.0f)
 		r.bounces -= 1;
 		ReflectOrRefract(r, intersection.normal, &randStates[id],
 			mat.refractionIndex);
 	}
 	else if (Length2(mat.emitColor) > 0.0f)
 	{
+		// Emissive Material, i.e. light source
 		r.color *= mat.emitColor;
 		r.bounces = -1;
 	}
 	else
 	{
+		// Diffuse Material
 		Reflect(r, intersection.t, intersection.normal, &randStates[id],
 			mat.roughness);
 		r.color *= (mat.albedo + mat.emitColor);
@@ -341,6 +441,8 @@ __global__ void ShadeIntersectionsKernel(DeviceImage* image,
 	world->rays[rayId] = r;
 }
 
+// Write the paths attenuated color to the back buffer
+// The color is weighted by a contribution factor.
 __global__ void WriteRayColorToImage(DeviceImage* image,
 	World* world, float contributionPerPixel)
 {
@@ -349,72 +451,4 @@ __global__ void WriteRayColorToImage(DeviceImage* image,
 
 	Ray r = world->rays[id];
 	image->pixels[id] += r.color * contributionPerPixel;
-}
-
-void Raytrace()
-{
-#ifndef _DEBUG
-	// Release
-	int threadCount = 1024;
-#else
-	// Debug
-	// In debug mode curand_init() requires an insane stack frame
-	// so we need to limit the block size.
-	int threadCount = 128; 
-#endif 
-
-	int imageWidth = g_cfg.imageWidth;
-	int imageHeight = g_cfg.imageHeight;
-	int rayCount = imageWidth * imageHeight;
-
-	int blockCount = imageWidth * imageHeight / threadCount + 1;
-
-	printf("Initializing cuRand states... ");
-	// #Time
-	TimeStamp startTime = std::chrono::high_resolution_clock::now();
-	InitCurandKernel << <blockCount, threadCount >> >
-		(rayCount, d_randStates, 1234, g_cfg.bUseFastRand);
-	cudaCall(cudaDeviceSynchronize());
-	TimeStamp endTime = std::chrono::high_resolution_clock::now();
-	double dt = GetElapsedSeconds(startTime, endTime);
-	g_totalSeconds += dt;
-	printf(" done! That took %3.3f seconds.\n", dt);
-
-	int maxBounces = g_cfg.maxBounces;
-	int samplesPerPixel = g_cfg.samplesPerPixel;
-	float contributionPerPixel = 1.0f / (float)samplesPerPixel;
-
-	bool bSortIntersections = g_cfg.bSortIntersections;
-
-	printf("Ray casting... ");
-	// #Time
-	startTime = std::chrono::high_resolution_clock::now();
-	for (int s = 0; s < samplesPerPixel; s++)
-	{
-		GeneratePrimaryRaysKernel << <blockCount, threadCount >> >
-			(d_image, d_world, d_camera, maxBounces, d_randStates);
-
-		for (int i = 0; i < maxBounces; i++)
-		{
-			ComputeIntersectionsKernel << <blockCount, threadCount >> >
-				(d_image, d_world);
-
-			if (bSortIntersections)
-			{
-				thrust::sort(g_deviceIntersections,
-					g_deviceIntersections + rayCount);
-			}
-			ShadeIntersectionsKernel << <blockCount, threadCount >> >
-				(d_image, d_world, d_randStates,bSortIntersections);
-		}
-
-		WriteRayColorToImage << <blockCount, threadCount >> >
-			(d_image, d_world, contributionPerPixel);
-	}
-
-	cudaCall(cudaDeviceSynchronize());
-	endTime = std::chrono::high_resolution_clock::now();
-	dt = GetElapsedSeconds(startTime, endTime);
-	g_totalSeconds += dt;
-	printf(" done! That took %3.3f seconds.\n", dt);
 }
