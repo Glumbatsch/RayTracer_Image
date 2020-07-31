@@ -39,7 +39,7 @@ void LoadConfig(const char* fileName, Config& cfg)
 		"1.0ff", buffer, 256, fileName);
 	cfg.filmDistance = (float)atof(buffer);
 	GetPrivateProfileString("Camera", "cameraDistance",
-		"12.5f", buffer, 256, fileName);
+		"-12.5f", buffer, 256, fileName);
 	cfg.cameraDistance = (float)atof(buffer);
 
 	cfg.samplesPerPixel = GetPrivateProfileInt("RT",
@@ -52,7 +52,7 @@ void LoadConfig(const char* fileName, Config& cfg)
 	cfg.bUseFastRand = GetPrivateProfileInt("Optimizations",
 		"bUseFastRand", 1, fileName);
 	cfg.bSortIntersections = GetPrivateProfileInt("Optimizations",
-		"bSortIntersections", 1, fileName);
+		"bSortIntersections", 0, fileName);
 
 	const char en[] = "enabled";
 	const char dis[] = "disabled";
