@@ -66,6 +66,7 @@
       <TargetMachinePlatform>64</TargetMachinePlatform>
       <GenerateRelocatableDeviceCode>true</GenerateRelocatableDeviceCode>
       <PtxAsOptionV>false</PtxAsOptionV>
+      <FastMath>false</FastMath>
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -89,6 +90,7 @@
       <TargetMachinePlatform>64</TargetMachinePlatform>
       <GenerateRelocatableDeviceCode>true</GenerateRelocatableDeviceCode>
       <PtxAsOptionV>false</PtxAsOptionV>
+      <FastMath>false</FastMath>
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemGroup>

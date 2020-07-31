@@ -318,9 +318,7 @@ __global__ void WriteRayColorToImage(DeviceImage* image,
 
 void Raytrace()
 {
-	// #Note With a higher block size the InitCurandKernel launch will 
-	// fail because it requires an insane ~6kb stack frame...
-	int threadCount = 512;
+	int threadCount = 1024;
 
 	int imageWidth = g_cfg.imageWidth;
 	int imageHeight = g_cfg.imageHeight;
