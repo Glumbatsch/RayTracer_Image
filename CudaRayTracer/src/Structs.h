@@ -74,10 +74,15 @@ struct World {
 
 struct Config
 {
+	// [Image]
 	int imageWidth;
 	int imageHeight;
 
+	// [RT]
 	int samplesPerPixel;
 	int maxBounces;
 	bool bDenoise;
+
+	// [Optimizations]
+	bool bUseFastRand;
 };

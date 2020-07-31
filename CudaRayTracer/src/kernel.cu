@@ -15,6 +15,7 @@
 
 #include "OpenImageDenoise\oidn.h"
 
+
 double g_totalSeconds = 0.0;
 Config g_cfg;
 float3* g_deviceImage;
@@ -33,7 +34,7 @@ __global__ void GeneratePrimaryRaysKernel(DeviceImage* image,
 __global__ void ComputeIntersectionsKernel(DeviceImage* image,
 	World* world);
 __global__ void InitCurandKernel(int rayCount,
-	curandState* randStates, int seed);
+	curandState* randStates, int seed, bool bUseFastRand);
 __global__ void ShadeIntersectionsKernel(DeviceImage* image,
 	World* world, curandState* randStates);
 __global__ void WriteRayColorToImage(DeviceImage* image,
@@ -184,17 +185,22 @@ void CudaInit()
 }
 
 __global__ void InitCurandKernel(int rayCount,
-	curandState* randStates, int seed)
+	curandState* randStates, int seed,bool bUseFastRand)
 {
 	int id = GetIndex();
 	if (id >= rayCount) return;
 
-	//curand_init(seed, id, 0, &randStates[id]);
 
-	// #hack 
-	// https://forums.developer.nvidia.com/t/curand-initialization-time/19758/3
-	// supposedly much faster init, with worse random numbers?
-	curand_init((seed << 20) + id, 0, 0, &randStates[id]);
+	if (bUseFastRand)
+	{
+		// #hack 
+		// https://forums.developer.nvidia.com/t/curand-initialization-time/19758/3
+		// supposedly much faster init, with worse random numbers?
+		curand_init((seed << 20) + id, 0, 0, &randStates[id]);
+	}
+	else {
+		curand_init(seed, id, 0, &randStates[id]);
+	}
 }
 
 __global__ void GeneratePrimaryRaysKernel(DeviceImage* image,
@@ -325,8 +331,8 @@ void Raytrace()
 	printf("Initializing cuRand states... ");
 	// #Time
 	TimeStamp startTime = std::chrono::high_resolution_clock::now();
-	InitCurandKernel << <blockCount, threadCount >> > 
-		(rayCount, d_randStates, 1234);
+	InitCurandKernel << <blockCount, threadCount >> >
+		(rayCount, d_randStates, 1234, g_cfg.bUseFastRand);
 	cudaCall(cudaDeviceSynchronize());
 	TimeStamp endTime = std::chrono::high_resolution_clock::now();
 	double dt = GetElapsedSeconds(startTime,endTime);

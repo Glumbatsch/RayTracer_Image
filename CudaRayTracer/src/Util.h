@@ -22,6 +22,7 @@ typedef std::chrono::steady_clock::time_point TimeStamp;
 
 void LoadConfig(const char* fileName, Config& cfg)
 {
+	// Loading
 	cfg.imageWidth = GetPrivateProfileInt("Image", "imageWidth",
 		1024, fileName);
 	cfg.imageHeight = GetPrivateProfileInt("Image", "imageHeight",
@@ -34,15 +35,21 @@ void LoadConfig(const char* fileName, Config& cfg)
 	cfg.bDenoise = GetPrivateProfileInt("RT", "bDenoise",
 		1, fileName);
 
+	cfg.bUseFastRand = GetPrivateProfileInt("Optimizations",
+		"bUseFastRand", 1, fileName);
 
+	// Print \x1b - escape for text color : 0m = standard
+	// 1;32 = bold green | 1;31 = bold red
+	const char en[] = "\x1b[1;32menabled\x1b[0m";
+	const char dis[] = "\x1b[1;31mdisabled\x1b[0m";
 	printf("Starting the Path tracer with the following configuration:\n\n");
 	printf("\tImage: %dx%d\n", cfg.imageWidth, cfg.imageHeight);
 	printf("\tSamples per pixel: %d\n", cfg.samplesPerPixel);
 	printf("\tMaximum bounces per path: %d\n", cfg.maxBounces);
-	const char en[] = "enabled";
-	const char dis[] = "disabled";
-	const char* denoiseString = cfg.bDenoise ? en : dis;
-	printf("\tDenoising is %s.\n", denoiseString);
+	const char* currentChoice = cfg.bDenoise ? en : dis;
+	printf("\tDenoising is %s.\n", currentChoice);
+	currentChoice = cfg.bUseFastRand ? en : dis;
+	printf("\tFast cuRand is %s.\n", currentChoice);
 	printf("\n");
 }
 // float3 to packed ABGR
