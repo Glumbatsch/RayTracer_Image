@@ -40,9 +40,7 @@ __global__ void ComputeIntersectionsKernel(DeviceImage* image,
 __global__ void InitCurandKernel(int rayCount,
 	curandState* randStates, int seed, bool bUseFastRand);
 __global__ void ShadeIntersectionsKernel(DeviceImage* image,
-	World* world, curandState* randStates);
-__global__ void ShadeIntersectionsKernelSorted(DeviceImage* image,
-	World* world, curandState* randStates);
+	World* world, curandState* randStates, bool bSorted);
 __global__ void WriteRayColorToImage(DeviceImage* image,
 	World* world, float contributionPerPixel);
 
@@ -63,7 +61,6 @@ int main()
 
 	printf("\nTotal time: %3.3f seconds.\n\n", g_totalSeconds);
 
-	Sleep(1000); // #hack sometimes os can't open the image
 	std::system("start image.bmp");
 	return 0;
 }
@@ -72,7 +69,7 @@ void CudaInit()
 {
 	int rayCount = g_cfg.imageWidth * g_cfg.imageHeight;
 
-	Material materials[6] = {};
+	Material materials[7] = {};
 	materials[0].emitColor = make_float3(0.1f, 0.4f, 0.5f) * 0.0f;
 	materials[1].albedo = make_float3(0.5f, 0.5f, 0.5f);
 	materials[1].roughness = 0.75f;
@@ -83,7 +80,8 @@ void CudaInit()
 	materials[4].albedo = make_float3(0.2f, 0.8f, 0.2f);
 	materials[4].roughness = 0.0f;
 	materials[5].emitColor = make_float3(0.1f, 1.0f, 0.1f) * 5.0f;
-
+	materials[6].albedo = make_float3(1.0f, 1.0f, 1.0f);
+	materials[6].refractionIndex = 1.5f;
 
 	Plane planes[5] = {};
 	float3 zero = make_float3(0.0f, 0.0f, 0.0f);
@@ -109,7 +107,7 @@ void CudaInit()
 	planes[4] = CreatePlane(up, up + right, up + forward);
 	planes[4].materialIndex = 1;
 
-	Sphere spheres[3] = {};
+	Sphere spheres[7] = {};
 	spheres[0].position = make_float3(0.0f, 0.0f, 3.75f);
 	spheres[0].radius = 1.0f;
 	spheres[0].materialIndex = 2;
@@ -121,6 +119,23 @@ void CudaInit()
 	spheres[2].position = make_float3(-2.0f, -1.0f, 2.0f);
 	spheres[2].radius = 1.0f;
 	spheres[2].materialIndex = 4;
+
+	spheres[3].position = make_float3(0.0f, -1.0f, 0.0f);
+	spheres[3].radius = 0.75f;
+	spheres[3].materialIndex = 6;
+
+	spheres[4].position = make_float3(0.0f, -1.0f, 0.0f);
+	spheres[4].radius = 0.7f;
+	spheres[4].materialIndex = 6;
+
+	spheres[5].position = make_float3(0.0f, 2.0f, 0.0f);
+	spheres[5].radius = 2.0f;
+	spheres[5].materialIndex = 3;
+
+	spheres[6].position = make_float3(0.0f, -50.0f, 0.0f);
+	spheres[6].radius = 2.0f;
+	spheres[6].materialIndex = 2;
+
 
 	World w = {};
 	w.materialCount = sizeof(materials) / sizeof(materials[0]);
@@ -291,18 +306,27 @@ __global__ void ComputeIntersectionsKernel(DeviceImage* image,
 }
 
 __global__ void ShadeIntersectionsKernel(DeviceImage* image,
-	World* world, curandState* randStates)
+	World* world, curandState* randStates, bool bSorted)
 {
 	int id = GetIndex();
 	if (IsOutOfBounds(id, image)) return;
 
-	Ray r = world->rays[id];
 	Intersection intersection = world->intersections[id];
-	if (r.bounces <= 0) return;
 
+	int rayId = bSorted ? intersection.id : id;
+
+	Ray r = world->rays[rayId];
 	Material mat = world->materials[intersection.material];
-
-	if (Length2(mat.emitColor) > 0.0f)
+	if (r.bounces <= 0) return;
+	
+	if (mat.refractionIndex > 0.0f)
+	{
+		r.color *= mat.albedo;
+		r.bounces -= 1;
+		ReflectOrRefract(r, intersection.normal, &randStates[id],
+			mat.refractionIndex);
+	}
+	else if (Length2(mat.emitColor) > 0.0f)
 	{
 		r.color *= mat.emitColor;
 		r.bounces = -1;
@@ -314,37 +338,8 @@ __global__ void ShadeIntersectionsKernel(DeviceImage* image,
 		r.color *= (mat.albedo + mat.emitColor);
 		r.bounces -= 1;
 	}
-	world->rays[id] = r;
+	world->rays[rayId] = r;
 }
-
-__global__ void ShadeIntersectionsKernelSorted(DeviceImage* image,
-	World* world, curandState* randStates)
-{
-	int id = GetIndex();
-	if (IsOutOfBounds(id, image)) return;
-
-	Intersection intersection = world->intersections[id];
-
-	Ray r = world->rays[intersection.id];
-	if (r.bounces <= 0) return;
-
-	Material mat = world->materials[intersection.material];
-
-	if (Length2(mat.emitColor) > 0.0f)
-	{
-		r.color *= mat.emitColor;
-		r.bounces = -1;
-	}
-	else
-	{
-		Reflect(r, intersection.t, intersection.normal, &randStates[id],
-			mat.roughness);
-		r.color *= (mat.albedo + mat.emitColor);
-		r.bounces -= 1;
-	}
-	world->rays[intersection.id] = r;
-}
-
 
 __global__ void WriteRayColorToImage(DeviceImage* image,
 	World* world, float contributionPerPixel)
@@ -408,14 +403,9 @@ void Raytrace()
 			{
 				thrust::sort(g_deviceIntersections,
 					g_deviceIntersections + rayCount);
-				ShadeIntersectionsKernelSorted << <blockCount, threadCount >> >
-					(d_image, d_world, d_randStates);
 			}
-			else
-			{
-				ShadeIntersectionsKernel << <blockCount, threadCount >> >
-					(d_image, d_world, d_randStates);
-			}
+			ShadeIntersectionsKernel << <blockCount, threadCount >> >
+				(d_image, d_world, d_randStates,bSortIntersections);
 		}
 
 		WriteRayColorToImage << <blockCount, threadCount >> >

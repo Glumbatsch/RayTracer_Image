@@ -78,3 +78,65 @@ __device__ void Reflect(Ray& ray, float t, float3 normal,
 	Normalize(ray.direction);
 	ray.origin += ray.direction * 0.0001f;
 }
+
+__device__ bool Refract(const Ray &ray, const float3 normal, 
+	float niOverNt, float3& refractedDirection)
+{
+	float dt = Dot(ray.direction, normal);
+	float discr = 1.0f - niOverNt * niOverNt * (1.0f - dt * dt);
+	if (discr > 0)
+	{
+		refractedDirection = niOverNt * (ray.direction - normal * dt) -
+			normal * sqrtf(discr);
+		return true;
+	}
+	return false;
+}
+
+__device__ float Schlick(float cosine, float refractionIndex)
+{
+	float r0 = (1.0f - refractionIndex) / (1.0f + refractionIndex);
+	r0 = r0 * r0;
+	return r0 + (1.0f - r0) * powf((1.0f-cosine),5.0f);
+}
+
+__device__ void ReflectOrRefract(Ray& ray, float3 normal,
+	curandState* randState, const float refractionIndex)
+{
+	float3 refract;
+	float niOverNt;
+	float cosine;
+	float reflectProb;
+	float3 outNormal;
+	if (Dot(ray.direction, normal) > 0.0f)
+	{
+		outNormal = -normal;
+		niOverNt = refractionIndex;
+		cosine = refractionIndex * Dot(ray.direction,normal);
+	}
+	else
+	{
+		outNormal = normal;
+		niOverNt = 1.0f / refractionIndex;
+		cosine = -Dot(ray.direction, normal);
+	}
+	if (Refract(ray, outNormal, niOverNt, refract))
+	{
+		reflectProb = Schlick(cosine, refractionIndex);
+	}
+	else
+	{
+		reflectProb = 1.0f;
+	}
+	if (curand_uniform(randState) < reflectProb)
+	{
+		ray.direction = Normalized(refract);
+	}
+	else
+	{
+		float3 pureReflect = Normalized(ray.direction
+			- Dot(ray.direction, normal) * 2.0f * normal);
+		ray.direction = pureReflect;
+	}
+	ray.origin += ray.direction * 0.0001f;
+}

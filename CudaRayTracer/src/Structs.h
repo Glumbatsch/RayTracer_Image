@@ -27,6 +27,7 @@ struct Material
 	float3 albedo;
 	float3 emitColor;
 	float roughness;
+	float refractionIndex;
 };
 
 struct Ray 
